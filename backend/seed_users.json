@@ -1,0 +1,44 @@
+{
+  "users": [
+    {
+      "name": "Alex Rivera",
+      "email": "alex.rivera@example.com",
+      "avatar_url": "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80",
+      "is_host": false,
+      "is_superhost": false,
+      "joined_date": "Joined May 2022"
+    },
+    {
+      "name": "Elena Rostova",
+      "email": "elena.rostova@example.com",
+      "avatar_url": "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80",
+      "is_host": true,
+      "is_superhost": true,
+      "joined_date": "Superhost \u00b7 5 years hosting"
+    },
+    {
+      "name": "Liam Vance",
+      "email": "liam.vance@example.com",
+      "avatar_url": "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=200&q=80",
+      "is_host": true,
+      "is_superhost": true,
+      "joined_date": "Superhost \u00b7 7 years hosting"
+    },
+    {
+      "name": "Sofia Rossi",
+      "email": "sofia.rossi@example.com",
+      "avatar_url": "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=200&q=80",
+      "is_host": true,
+      "is_superhost": true,
+      "joined_date": "Superhost \u00b7 4 years hosting"
+    },
+    {
+      "name": "Kenji Sato",
+      "email": "kenji.sato@example.com",
+      "avatar_url": "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
+      "is_host": true,
+      "is_superhost": true,
+      "joined_date": "Superhost \u00b7 6 years hosting"
+    }
+  ]
+}
