@@ -102,7 +102,14 @@ export async function fetchListings(
     };
   } catch (err) {
     console.warn("Backend slow or unreachable, serving instant fallback stays:", err);
-    let filtered = [...FALLBACK_LISTINGS];
+    
+    // Mix in user's mocked local listings
+    let mockListings = [];
+    if (typeof window !== "undefined") {
+      mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+    }
+    
+    let filtered = [...mockListings, ...FALLBACK_LISTINGS];
     if (filters.category && filters.category !== "All") {
       filtered = filtered.filter((l) => l.category.toLowerCase() === filters.category!.toLowerCase());
     }
@@ -147,8 +154,15 @@ export async function fetchListing(id: number, userId?: number): Promise<Listing
     return await handleResponse(res);
   } catch (err) {
     console.warn(`Backend slow or unreachable for listing ${id}, serving fallback detail:`, err);
-    const item = FALLBACK_LISTINGS.find((l) => l.id === Number(id)) || FALLBACK_LISTINGS[0];
-    const listingImages = (item.images || []).map((url, idx) => ({
+    
+    let mockListings: any[] = [];
+    if (typeof window !== "undefined") {
+      mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+    }
+    
+    const allItems = [...mockListings, ...FALLBACK_LISTINGS];
+    const item = allItems.find((l: any) => l.id === Number(id)) || FALLBACK_LISTINGS[0];
+    const listingImages = (item.images || []).map((url: string, idx: number) => ({
       id: idx + 1,
       url,
       is_cover: idx === 0,
@@ -203,11 +217,12 @@ export async function createListing(data: ListingCreateInput): Promise<ListingDe
     });
     return await handleResponse(res);
   } catch (err) {
-    console.warn("Backend error. Mocking successful listing creation.");
+    console.warn("Backend error. Mocking successful listing creation with localStorage.");
     await new Promise(r => setTimeout(r, 800));
-    return {
-      id: Math.floor(Math.random() * 10000),
-      host_id: 2,
+    
+    const mockListing = {
+      id: Math.floor(Math.random() * 10000) + 1000,
+      host_id: data.host_id || 2,
       title: data.title,
       description: data.description,
       category: data.category,
@@ -225,9 +240,19 @@ export async function createListing(data: ListingCreateInput): Promise<ListingDe
       beds: data.beds,
       baths: data.baths,
       is_guest_favorite: false,
-      images: (data.images || []).map((url, idx) => ({ id: idx, url, is_cover: idx === 0, display_order: idx })),
-      host: { id: 2, name: "Host", avatar_url: "", is_superhost: false },
-    } as any;
+      rating: 5.0,
+      review_count: 0,
+      images: (data.images || []).map((url: string, idx: number) => ({ id: idx, url, is_cover: idx === 0, display_order: idx })),
+      host: { id: data.host_id || 2, name: "Host", avatar_url: "", is_superhost: false },
+    };
+
+    if (typeof window !== "undefined") {
+      const existing = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+      existing.unshift(mockListing);
+      localStorage.setItem("airbnb_mock_listings", JSON.stringify(existing));
+    }
+
+    return mockListing as any;
   }
 }
 
@@ -450,15 +475,19 @@ export async function fetchHostDashboard(hostId?: number): Promise<HostDashboard
     const res = await fetch(`${API_BASE}/host/dashboard/${query}`, { headers: { ...getAuthHeaders() },  cache: "no-store" });
     return await handleResponse(res);
   } catch (err) {
-    console.warn("Backend error. Mocking host dashboard.");
+    console.warn("Backend error. Mocking host dashboard with localStorage.");
+    let mockListings = [];
+    if (typeof window !== "undefined") {
+      mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+    }
     return {
       stats: {
-        total_listings: 3,
+        total_listings: mockListings.length,
         total_bookings: 10,
         total_revenue: 12500,
         average_rating: 4.8
       },
-      listings: [],
+      listings: mockListings,
       recent_bookings: [],
     };
   }
