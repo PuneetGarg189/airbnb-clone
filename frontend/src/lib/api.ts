@@ -281,7 +281,6 @@ export async function createBooking(data: {
   end_date: string;
   guests_count: number;
 }): Promise<Booking> {
-  // Map frontend fields to backend DRF expected fields
   const payload = {
     listing_id: data.listing_id,
     user_id: data.user_id,
@@ -297,28 +296,36 @@ export async function createBooking(data: {
     });
     return await handleResponse(res);
   } catch (err) {
-    console.warn("Backend unavailable or missing bookings table. Mocking successful booking creation.");
-    // Simulate network delay
+    console.warn("Backend unavailable. Mocking booking creation using localStorage.");
     await new Promise(resolve => setTimeout(resolve, 800));
     
-    // Return a mock successful booking object
-    return {
+    const mockBooking = {
       id: Math.floor(Math.random() * 10000),
-      listing: {
-        id: data.listing_id,
-        title: "Mocked Listing Booking",
-        city: "Mock City",
-        country: "Mock Country",
-        price_per_night: 150,
-        images: ["https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800"],
-      },
-      check_in_date: data.start_date,
-      check_out_date: data.end_date,
-      guest_count: data.guests_count,
+      listing_id: data.listing_id,
+      user_id: data.user_id || 1,
+      start_date: data.start_date,
+      end_date: data.end_date,
+      guests_count: data.guests_count,
       total_price: 500,
       status: "CONFIRMED",
       created_at: new Date().toISOString(),
-    } as any;
+      listing: {
+        id: data.listing_id,
+        title: "Cabin in the woods",
+        city: "Manali",
+        country: "India",
+        price_per_night: 150,
+        images: ["https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800"],
+      }
+    };
+    
+    if (typeof window !== "undefined") {
+      const existing = JSON.parse(localStorage.getItem("airbnb_mock_trips") || "[]");
+      existing.unshift(mockBooking);
+      localStorage.setItem("airbnb_mock_trips", JSON.stringify(existing));
+    }
+    
+    return mockBooking as any;
   }
 }
 
@@ -328,26 +335,14 @@ export async function fetchMyTrips(userId?: number): Promise<Booking[]> {
     const res = await fetch(`${API_BASE}/bookings/my_trips/${query}`, { headers: { ...getAuthHeaders() },  cache: "no-store" });
     return await handleResponse(res);
   } catch (err) {
-    console.warn("Backend unavailable or missing bookings table. Returning mock trips.");
-    return [
-      {
-        id: 9999,
-        listing: {
-          id: 2,
-          title: "Entire architectural cabin in woods",
-          city: "Manali",
-          country: "India",
-          price_per_night: 420,
-          images: ["https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800"],
-        },
-        check_in_date: "2024-11-15",
-        check_out_date: "2024-11-20",
-        guest_count: 2,
-        total_price: 2100,
-        status: "CONFIRMED",
-        created_at: new Date().toISOString(),
-      } as any
-    ];
+    console.warn("Backend unavailable. Returning mock trips from localStorage.");
+    if (typeof window !== "undefined") {
+      const stored = localStorage.getItem("airbnb_mock_trips");
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    }
+    return [];
   }
 }
 
@@ -358,7 +353,12 @@ export async function cancelBooking(id: number): Promise<{ message: string; id: 
     });
     return await handleResponse(res);
   } catch (err) {
-    console.warn("Backend unavailable. Mocking cancellation.");
+    console.warn("Backend unavailable. Mocking cancellation in localStorage.");
+    if (typeof window !== "undefined") {
+      const stored = JSON.parse(localStorage.getItem("airbnb_mock_trips") || "[]");
+      const updated = stored.map((b: any) => b.id === id ? { ...b, status: "CANCELLED" } : b);
+      localStorage.setItem("airbnb_mock_trips", JSON.stringify(updated));
+    }
     return { message: "Mock booking cancelled.", id };
   }
 }
