@@ -149,6 +149,19 @@ export default function Navbar() {
                 {isHost ? "Switch to traveling" : "Become a host"}
               </button>
 
+
+              {/* Dark Mode Toggle — always visible in the navbar */}
+              <button
+                onClick={toggleDarkMode}
+                title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+                className="h-10 w-10 flex items-center justify-center rounded-full bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 transition"
+              >
+                {isDarkMode
+                  ? <Sun className="h-5 w-5 text-yellow-400" />
+                  : <Moon className="h-5 w-5 text-gray-600" />
+                }
+              </button>
+
               <div className="flex items-center gap-2 relative">
                 {/* Profile Icon Button */}
                 <button
