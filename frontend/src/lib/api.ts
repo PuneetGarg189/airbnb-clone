@@ -104,12 +104,17 @@ export async function fetchListings(
     console.warn("Backend slow or unreachable, serving instant fallback stays:", err);
     
     // Mix in user's mocked local listings
-    let mockListings = [];
+    let mockListings: any[] = [];
+    let deletedIds: number[] = [];
     if (typeof window !== "undefined") {
       mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+      deletedIds = JSON.parse(localStorage.getItem("airbnb_deleted_ids") || "[]");
     }
     
-    let filtered = [...mockListings, ...FALLBACK_LISTINGS];
+    let filtered = [
+      ...mockListings,
+      ...FALLBACK_LISTINGS.filter(l => !deletedIds.includes(l.id))
+    ];
     if (filters.category && filters.category !== "All") {
       filtered = filtered.filter((l) => l.category.toLowerCase() === filters.category!.toLowerCase());
     }
@@ -283,10 +288,24 @@ export async function deleteListing(id: number): Promise<{ message: string; id: 
     });
     return await handleResponse(res);
   } catch (err) {
-    console.warn("Backend error. Mocking successful listing deletion.");
+    console.warn("Backend error. Removing listing from localStorage.");
     await new Promise(r => setTimeout(r, 500));
-    return { message: "Mock deleted", id };
   }
+  // Always remove from localStorage (runs for both backend success/failure in mock mode)
+  if (typeof window !== "undefined") {
+    // Remove from mock listings array
+    const mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+    const updated = mockListings.filter((l: any) => l.id !== id);
+    localStorage.setItem("airbnb_mock_listings", JSON.stringify(updated));
+
+    // Also track deleted fallback IDs so they get filtered from FALLBACK_LISTINGS
+    const deletedIds = JSON.parse(localStorage.getItem("airbnb_deleted_ids") || "[]");
+    if (!deletedIds.includes(id)) {
+      deletedIds.push(id);
+      localStorage.setItem("airbnb_deleted_ids", JSON.stringify(deletedIds));
+    }
+  }
+  return { message: "Mock deleted", id };
 }
 
 export async function fetchBookedDates(listingId: number): Promise<BookedDateRange[]> {
@@ -487,9 +506,13 @@ export async function fetchHostDashboard(hostId?: number): Promise<HostDashboard
     return await handleResponse(res);
   } catch (err) {
     console.warn("Backend error. Mocking host dashboard with localStorage.");
-    let mockListings = [];
+    let mockListings: any[] = [];
+    let deletedIds: number[] = [];
     if (typeof window !== "undefined") {
       mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+      deletedIds = JSON.parse(localStorage.getItem("airbnb_deleted_ids") || "[]");
+      // Filter out any deleted fallback listings from host's view
+      mockListings = mockListings.filter((l: any) => !deletedIds.includes(l.id));
     }
     return {
       stats: {
