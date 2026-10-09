@@ -51,7 +51,17 @@ export default function CheckoutModal({
         start_date: startDate,
         end_date: endDate,
         guests_count: guestsCount,
-      });
+        // Pass full listing snapshot so mock trips are dynamic
+        _listing_snapshot: {
+          title: listing.title,
+          city: listing.city,
+          country: listing.country,
+          price_per_night: listing.price_per_night,
+          cleaning_fee: listing.cleaning_fee,
+          service_fee: listing.service_fee,
+          image: listing.images?.[0]?.url || "",
+        },
+      } as any);
 
       toast.success("Reservation confirmed! Have an incredible stay.", {
         duration: 5000,

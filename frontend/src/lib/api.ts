@@ -321,29 +321,19 @@ export async function createBooking(data: {
     });
     return await handleResponse(res);
   } catch (err) {
-    console.warn("Backend unavailable. Mocking booking creation using localStorage.");
+    console.warn("Backend unavailable. Mocking booking creation using listing snapshot + localStorage.");
     await new Promise(resolve => setTimeout(resolve, 800));
-    
-    // Find the actual listing that was booked
-    let mockListings: any[] = [];
-    if (typeof window !== "undefined") {
-      mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
-    }
-    const allItems = [...mockListings, ...FALLBACK_LISTINGS];
-    const actualListing = allItems.find(l => l.id === data.listing_id) || FALLBACK_LISTINGS[0];
-    
-    // Calculate nights and dynamic total price
+
+    // Use the full listing snapshot passed from CheckoutModal (no lookup needed!)
+    const snap = (data as any)._listing_snapshot || {};
+
     const start = new Date(data.start_date);
     const end = new Date(data.end_date);
     const nights = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 3600 * 24)));
-    const pricePerNight = actualListing.price_per_night || 150;
-    const cleaningFee = actualListing.cleaning_fee || 120;
-    const serviceFee = actualListing.service_fee || 65;
+    const pricePerNight = Number(snap.price_per_night) || 150;
+    const cleaningFee = Number(snap.cleaning_fee) || 120;
+    const serviceFee = Number(snap.service_fee) || 65;
     const total = (pricePerNight * nights) + cleaningFee + serviceFee;
-    
-    // Fallback image handling
-    const images = actualListing.images || actualListing.image_urls || ["https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800"];
-    const displayImage = typeof images[0] === 'string' ? images[0] : (images[0]?.url || "https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800");
 
     const mockBooking = {
       id: Math.floor(Math.random() * 10000),
@@ -357,20 +347,20 @@ export async function createBooking(data: {
       created_at: new Date().toISOString(),
       listing: {
         id: data.listing_id,
-        title: actualListing.title,
-        city: actualListing.city,
-        country: actualListing.country,
+        title: snap.title || "Vacation Stay",
+        city: snap.city || "City",
+        country: snap.country || "Country",
         price_per_night: pricePerNight,
-        images: [displayImage],
+        images: [snap.image || "https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800"],
       }
     };
-    
+
     if (typeof window !== "undefined") {
       const existing = JSON.parse(localStorage.getItem("airbnb_mock_trips") || "[]");
       existing.unshift(mockBooking);
       localStorage.setItem("airbnb_mock_trips", JSON.stringify(existing));
     }
-    
+
     return mockBooking as any;
   }
 }
