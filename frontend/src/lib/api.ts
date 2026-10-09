@@ -324,6 +324,27 @@ export async function createBooking(data: {
     console.warn("Backend unavailable. Mocking booking creation using localStorage.");
     await new Promise(resolve => setTimeout(resolve, 800));
     
+    // Find the actual listing that was booked
+    let mockListings: any[] = [];
+    if (typeof window !== "undefined") {
+      mockListings = JSON.parse(localStorage.getItem("airbnb_mock_listings") || "[]");
+    }
+    const allItems = [...mockListings, ...FALLBACK_LISTINGS];
+    const actualListing = allItems.find(l => l.id === data.listing_id) || FALLBACK_LISTINGS[0];
+    
+    // Calculate nights and dynamic total price
+    const start = new Date(data.start_date);
+    const end = new Date(data.end_date);
+    const nights = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 3600 * 24)));
+    const pricePerNight = actualListing.price_per_night || 150;
+    const cleaningFee = actualListing.cleaning_fee || 120;
+    const serviceFee = actualListing.service_fee || 65;
+    const total = (pricePerNight * nights) + cleaningFee + serviceFee;
+    
+    // Fallback image handling
+    const images = actualListing.images || actualListing.image_urls || ["https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800"];
+    const displayImage = typeof images[0] === 'string' ? images[0] : (images[0]?.url || "https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800");
+
     const mockBooking = {
       id: Math.floor(Math.random() * 10000),
       listing_id: data.listing_id,
@@ -331,16 +352,16 @@ export async function createBooking(data: {
       start_date: data.start_date,
       end_date: data.end_date,
       guests_count: data.guests_count,
-      total_price: 500,
+      total_price: total,
       status: "CONFIRMED",
       created_at: new Date().toISOString(),
       listing: {
         id: data.listing_id,
-        title: "Cabin in the woods",
-        city: "Manali",
-        country: "India",
-        price_per_night: 150,
-        images: ["https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800"],
+        title: actualListing.title,
+        city: actualListing.city,
+        country: actualListing.country,
+        price_per_night: pricePerNight,
+        images: [displayImage],
       }
     };
     
