@@ -43,12 +43,25 @@ export default function HostDashboardPage() {
     if (!confirm("Are you sure you want to delete this listing? All associated bookings and photos will be removed.")) {
       return;
     }
+    // Optimistically remove from UI immediately so the card disappears right away
+    setData((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        listings: prev.listings.filter((l) => l.id !== id),
+        stats: {
+          ...prev.stats,
+          total_listings: Math.max(0, prev.stats.total_listings - 1),
+        },
+      };
+    });
     try {
       await deleteListing(id);
       toast.success("Listing deleted successfully");
-      loadDashboard();
     } catch (err: any) {
       toast.error(err.message || "Failed to delete listing");
+      // Re-fetch to restore state if something truly went wrong
+      loadDashboard();
     }
   };
 

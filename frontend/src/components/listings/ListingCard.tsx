@@ -13,9 +13,10 @@ import { useAuth } from "@/context/AuthContext";
 
 interface ListingCardProps {
   listing: ListingCardType;
+  onDelete?: (id: number) => void;
 }
 
-export default function ListingCard({ listing }: ListingCardProps) {
+export default function ListingCard({ listing, onDelete }: ListingCardProps) {
   const { isWishlisted, toggle } = useWishlist();
   const { user, isHost, isLoggedIn } = useAuth();
   const router = useRouter();
@@ -36,6 +37,7 @@ export default function ListingCard({ listing }: ListingCardProps) {
   const [photoIndex, setPhotoIndex] = useState(0);
   const [heartAnimating, setHeartAnimating] = useState(false);
   const [showArrows, setShowArrows] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false);
 
   const prevPhoto = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -54,15 +56,22 @@ export default function ListingCard({ listing }: ListingCardProps) {
     e.preventDefault();
     e.stopPropagation();
     if (confirm("Are you sure you want to remove this listing?")) {
+      // Instantly hide the card
+      setIsDeleted(true);
       try {
         await deleteListing(listing.id);
         toast.success("Listing removed successfully");
-        window.location.reload();
+        if (onDelete) onDelete(listing.id);
       } catch (err) {
         toast.error("Failed to remove listing");
+        setIsDeleted(false); // restore if it failed
       }
     }
   };
+
+  // Don't render if deleted
+  if (isDeleted) return null;
+
 
   const nextPhoto = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
