@@ -47,6 +47,7 @@ export default function FilterModal({
 
   useEffect(() => {
     if (isOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMinPrice(currentFilters.min_price);
       setMaxPrice(currentFilters.max_price);
       setSelectedType(currentFilters.property_type || "Any");

@@ -1,7 +1,8 @@
 export interface User {
   id: number;
   name: string;
-  email: string;
+  email?: string;
+  username?: string;
   avatar_url?: string;
   is_host: boolean;
   is_superhost: boolean;
@@ -34,7 +35,7 @@ export interface ListingCard {
   images: string[];
   is_guest_favourite?: boolean;
   is_wishlisted?: boolean;
-  host?: { id: number; name: string; avatar_url: string };
+  host?: User;
 }
 
 export interface ListingDetail {
@@ -83,8 +84,7 @@ export interface ListingCreateInput {
   beds: number;
   baths: number;
   amenities: string[];
-  images: string[];
-  host_id?: number;
+  image_urls: string[];
 }
 
 export interface Booking {
@@ -98,7 +98,18 @@ export interface Booking {
   total_price: number;
   status: string;
   created_at: string;
-  listing?: ListingCard;
+  guest?: { id: number; name: string; avatar_url?: string };
+  nights?: number;
+  listing?: {
+    id: number;
+    title: string;
+    location: string;
+    city: string;
+    country: string;
+    property_type: string;
+    price_per_night: number;
+    cover_image: string;
+  };
 }
 
 export interface BookedDateRange {

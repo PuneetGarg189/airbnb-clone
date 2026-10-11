@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Luggage, Sparkles } from "lucide-react";
 import { fetchMyTrips, cancelBooking } from "@/lib/api";
@@ -8,42 +8,56 @@ import { Booking } from "@/types";
 import { useAuth } from "@/context/AuthContext";
 import BookingCard from "@/components/booking/BookingCard";
 import toast from "react-hot-toast";
+import RequireAuth from "@/components/auth/RequireAuth";
+import { todayISO } from "@/lib/dates";
 
 type Tab = "upcoming" | "past" | "cancelled";
 
 export default function TripsPage() {
+  return (
+    <RequireAuth what="your trips">
+      <Trips />
+    </RequireAuth>
+  );
+}
+
+function Trips() {
   const { user } = useAuth();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<Tab>("upcoming");
 
-  const loadTrips = async () => {
+  const [error, setError] = useState("");
+  const userId = user?.id;
+
+  const loadTrips = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const data = await fetchMyTrips(user.id);
-      setBookings(data);
-    } catch {
-      setBookings([]);
+      setBookings(await fetchMyTrips());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load your trips.");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadTrips();
-  }, [user.id]);
+  }, [loadTrips, userId]);
 
   const handleCancel = async (bookingId: number) => {
     try {
       await cancelBooking(bookingId);
-      toast.success("Reservation cancelled successfully");
+      toast.success("Reservation cancelled");
       loadTrips();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to cancel reservation");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to cancel reservation");
     }
   };
 
-  const now = new Date().toISOString().split("T")[0];
+  const now = todayISO();
   
   const upcoming = bookings.filter((b) => b.status?.toLowerCase() !== "cancelled" && b.end_date >= now);
   const past = bookings.filter((b) => b.status?.toLowerCase() !== "cancelled" && b.end_date < now);
@@ -112,12 +126,17 @@ export default function TripsPage() {
               <div key={i} className="h-44 bg-gray-100 rounded-3xl" />
             ))}
           </div>
+        ) : error ? (
+          <div className="py-24 text-center" role="alert">
+            <p className="mb-4 text-sm text-gray-600">{error}</p>
+            <button onClick={loadTrips} className="cursor-pointer rounded-xl bg-black px-6 py-2.5 text-xs font-bold text-white">Try again</button>
+          </div>
         ) : activeBookings.length === 0 ? (
           <div className="py-24 text-center">
             <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-pink-50 text-2xl mb-4">
               <Luggage className="h-8 w-8 text-[#FF385C]" />
             </div>
-            <h2 className="text-xl font-bold text-gray-900">No {activeTab} trips... yet!</h2>
+            <h2 className="text-xl font-bold text-gray-900">No {activeTab} trips</h2>
             <p className="mt-2 text-sm text-gray-500 max-w-sm mx-auto">
               Time to dust off your bags and start planning your next great adventure.
             </p>

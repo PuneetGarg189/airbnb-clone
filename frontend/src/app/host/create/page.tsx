@@ -4,9 +4,11 @@ import React from "react";
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
 import ListingForm from "@/components/host/ListingForm";
+import RequireAuth from "@/components/auth/RequireAuth";
 
 export default function CreateListingPage() {
   return (
+    <RequireAuth host what="the listing form">
     <div className="min-h-screen bg-gray-50 py-10">
       <div className="mx-auto max-w-4xl px-4 sm:px-6 lg:px-8">
         <Link
@@ -26,5 +28,6 @@ export default function CreateListingPage() {
         <ListingForm />
       </div>
     </div>
+    </RequireAuth>
   );
 }

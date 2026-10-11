@@ -1,5 +1,10 @@
 from rest_framework import serializers
+
+from listings.serializers import cover_url
+from users.serializers import PublicUserSerializer
+
 from .models import Booking
+
 
 class ListingMiniSerializer(serializers.Serializer):
     id = serializers.IntegerField()
@@ -12,57 +17,37 @@ class ListingMiniSerializer(serializers.Serializer):
     cover_image = serializers.SerializerMethodField()
 
     def get_cover_image(self, obj):
-        img = obj.images.filter(is_primary=True).first() or obj.images.first()
-        return img.url if img else ''
+        return cover_url(obj)
+
 
 class BookingSerializer(serializers.ModelSerializer):
+    """How a booking is returned to the UI."""
+
     listing = ListingMiniSerializer(read_only=True)
-    listing_id = serializers.IntegerField(write_only=True)
-    start_date = serializers.SerializerMethodField()
-    end_date = serializers.SerializerMethodField()
-    guests_count = serializers.SerializerMethodField()
+    listing_id = serializers.IntegerField(read_only=True)
+    user_id = serializers.IntegerField(source="guest_id", read_only=True)
+    guest = PublicUserSerializer(read_only=True)
+    start_date = serializers.DateField(source="check_in_date", read_only=True)
+    end_date = serializers.DateField(source="check_out_date", read_only=True)
+    guests_count = serializers.IntegerField(source="guest_count", read_only=True)
+    nightly_price = serializers.DecimalField(
+        source="listing.price_per_night", max_digits=10, decimal_places=2, read_only=True
+    )
+    nights = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Booking
         fields = (
-            'id', 'listing', 'listing_id', 'guest',
-            'check_in_date', 'check_out_date', 'guest_count',
-            'start_date', 'end_date', 'guests_count',
-            'total_price', 'status', 'created_at'
+            "id", "listing", "listing_id", "user_id", "guest", "start_date", "end_date",
+            "guests_count", "nights", "nightly_price", "total_price", "status", "created_at",
         )
-        read_only_fields = ('guest', 'total_price', 'status', 'created_at')
 
-    def get_start_date(self, obj):
-        return str(obj.check_in_date)
 
-    def get_end_date(self, obj):
-        return str(obj.check_out_date)
+class BookingCreateSerializer(serializers.Serializer):
+    """Input for POST /bookings/. The guest is the signed-in user; the price is
+    always computed on the server, never taken from the client."""
 
-    def get_guests_count(self, obj):
-        return obj.guest_count
-
-    def validate(self, data):
-        check_in = data.get('check_in_date')
-        check_out = data.get('check_out_date')
-        if check_in and check_out:
-            if check_in >= check_out:
-                raise serializers.ValidationError('Check-out must be after check-in.')
-            listing_id = data.get('listing_id')
-            overlapping = Booking.objects.filter(
-                listing_id=listing_id,
-                status='CONFIRMED',
-                check_in_date__lt=check_out,
-                check_out_date__gt=check_in
-            ).exists()
-            if overlapping:
-                raise serializers.ValidationError('These dates are already booked.')
-        return data
-
-    def create(self, validated_data):
-        listing_id = validated_data['listing_id']
-        from listings.models import Listing
-        listing = Listing.objects.get(id=listing_id)
-        nights = (validated_data['check_out_date'] - validated_data['check_in_date']).days
-        total = float(listing.price_per_night) * nights + float(listing.cleaning_fee) + float(listing.service_fee)
-        validated_data['total_price'] = total
-        return super().create(validated_data)
+    listing_id = serializers.IntegerField()
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
+    guests_count = serializers.IntegerField(min_value=1, max_value=50)

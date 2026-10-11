@@ -30,10 +30,6 @@ export default function ListingCard({ listing, onDelete }: ListingCardProps) {
     ...(listing.images || []).filter((img) => img !== listing.cover_image),
   ].filter(Boolean).slice(0, 5);
 
-  if (photos.length === 0) {
-    photos.push('https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800');
-  }
-
   const [photoIndex, setPhotoIndex] = useState(0);
   const [heartAnimating, setHeartAnimating] = useState(false);
   const [showArrows, setShowArrows] = useState(false);
@@ -46,6 +42,12 @@ export default function ListingCard({ listing, onDelete }: ListingCardProps) {
   }, [photos.length]);
 
 
+  const nextPhoto = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPhotoIndex((i) => (i + 1) % photos.length);
+  }, [photos.length]);
+
   const handleEdit = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -55,7 +57,7 @@ export default function ListingCard({ listing, onDelete }: ListingCardProps) {
   const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (confirm("Are you sure you want to remove this listing?")) {
+    if (window.confirm("Are you sure you want to remove this listing?")) {
       // Instantly hide the card
       setIsDeleted(true);
       try {
@@ -63,7 +65,7 @@ export default function ListingCard({ listing, onDelete }: ListingCardProps) {
         toast.success("Listing removed successfully");
         if (onDelete) onDelete(listing.id);
       } catch (err) {
-        toast.error("Failed to remove listing");
+        toast.error(err instanceof Error ? err.message : "Failed to remove listing");
         setIsDeleted(false); // restore if it failed
       }
     }
@@ -72,12 +74,6 @@ export default function ListingCard({ listing, onDelete }: ListingCardProps) {
   // Don't render if deleted
   if (isDeleted) return null;
 
-
-  const nextPhoto = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setPhotoIndex((i) => (i + 1) % photos.length);
-  }, [photos.length]);
 
   const handleWishlist = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -95,12 +91,17 @@ export default function ListingCard({ listing, onDelete }: ListingCardProps) {
         onMouseEnter={() => setShowArrows(true)}
         onMouseLeave={() => setShowArrows(false)}
       >
-        <img
-          src={photos[photoIndex]}
-          alt={listing.title}
-          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-          loading="lazy"
-        />
+        {photos.length > 0 ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photos[photoIndex]}
+            alt={listing.title}
+            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-xs text-gray-400">No photo</div>
+        )}
 
         {/* Guest Favourite badge */}
         {listing.is_guest_favourite && (
@@ -186,20 +187,25 @@ export default function ListingCard({ listing, onDelete }: ListingCardProps) {
 
       {/* Info */}
       <div className="mt-3 space-y-0.5">
-        <div className="flex justify-between items-start">
-          <h3 className="text-sm font-semibold text-gray-900 truncate flex-1 pr-2">
-            {listing.city}, {listing.country}
+        <div className="flex items-start justify-between">
+          <h3 className="flex-1 truncate pr-2 text-sm font-semibold text-gray-900">
+            {listing.property_type} in {listing.city}
           </h3>
-          <div className="flex items-center gap-1 shrink-0">
-            <Star className="w-3 h-3 fill-gray-900 text-gray-900" />
-            <span className="text-sm text-gray-900">{listing.rating.toFixed(2)}</span>
+          <div className="flex shrink-0 items-center gap-1 text-sm text-gray-900">
+            {listing.reviews_count > 0 ? (
+              <>
+                <Star className="h-3 w-3 fill-gray-900 text-gray-900" />
+                <span>{Number(listing.rating).toFixed(2)}</span>
+              </>
+            ) : (
+              <span className="text-xs font-semibold">New</span>
+            )}
           </div>
         </div>
-        <p className="text-sm text-gray-500 truncate">{listing.title}</p>
-        <p className="text-sm text-gray-500">{listing.reviews_count} reviews</p>
+        <p className="truncate text-sm text-gray-500">{listing.title}</p>
         <p className="text-sm">
           <span className="font-semibold text-gray-900">{formatPrice(listing.price_per_night)}</span>
-          <span className="text-gray-500 font-normal"> night</span>
+          <span className="font-normal text-gray-500"> night</span>
         </p>
       </div>
     </Link>

@@ -4,7 +4,8 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { Calendar, Users, Star, AlertTriangle } from "lucide-react";
 import { Booking } from "@/types";
-import { formatPrice, formatDate, calculateNights } from "@/lib/utils";
+import { formatPrice } from "@/lib/utils";
+import { nightsBetween, prettyDate, todayISO } from "@/lib/dates";
 import AddReviewModal from "@/components/reviews/AddReviewModal";
 
 interface BookingCardProps {
@@ -16,22 +17,19 @@ export default function BookingCard({ booking, onCancel }: BookingCardProps) {
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [isConfirmCancelOpen, setIsConfirmCancelOpen] = useState(false);
 
-  const nights = calculateNights(booking.start_date, booking.end_date);
+  const nights = nightsBetween(booking.start_date, booking.end_date);
   const isCancelled = booking.status?.toLowerCase() === "cancelled";
+  const isPast = booking.end_date <= todayISO();
 
   return (
     <>
       <div className="flex flex-col sm:flex-row gap-5 rounded-3xl border border-gray-200 bg-white p-5 shadow-xs hover:shadow-md transition">
         {/* Thumbnail */}
         <div className="sm:w-56 aspect-4/3 sm:aspect-square overflow-hidden rounded-2xl bg-gray-100 shrink-0 relative">
-          <img
-            src={
-              booking.listing?.cover_image ||
-              "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=600&q=80"
-            }
-            alt={booking.listing?.title || "Stay"}
-            className="h-full w-full object-cover"
-          />
+          {booking.listing?.cover_image && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={booking.listing.cover_image} alt={booking.listing.title} className="h-full w-full object-cover" />
+          )}
           <div className="absolute top-2 left-2">
             <span
               className={`rounded-full px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider ${
@@ -51,10 +49,10 @@ export default function BookingCard({ booking, onCancel }: BookingCardProps) {
             <div className="flex items-start justify-between gap-2">
               <div>
                 <p className="text-xs font-semibold text-gray-500 uppercase">
-                  {booking.listing?.property_type || "Vacation Stay"}
+                  {booking.listing?.property_type}
                 </p>
                 <h3 className="text-base font-bold text-gray-900 line-clamp-1">
-                  {booking.listing?.title || "Beautiful Vacation Home"}
+                  {booking.listing?.title}
                 </h3>
                 <p className="text-xs text-gray-500">{booking.listing?.location}</p>
               </div>
@@ -62,7 +60,7 @@ export default function BookingCard({ booking, onCancel }: BookingCardProps) {
                 <p className="text-base font-black text-gray-900">
                   {formatPrice(booking.total_price)}
                 </p>
-                <p className="text-[11px] text-gray-500">{nights} nights total</p>
+                <p className="text-[11px] text-gray-500">{nights} {nights === 1 ? "night" : "nights"} total</p>
               </div>
             </div>
 
@@ -71,7 +69,7 @@ export default function BookingCard({ booking, onCancel }: BookingCardProps) {
               <div className="flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
                 <Calendar className="h-4 w-4 text-[#FF385C]" />
                 <span className="font-semibold">
-                  {formatDate(booking.start_date)}  {formatDate(booking.end_date)}
+                  {prettyDate(booking.start_date)} → {prettyDate(booking.end_date)}
                 </span>
               </div>
               <div className="flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
@@ -85,34 +83,34 @@ export default function BookingCard({ booking, onCancel }: BookingCardProps) {
 
           {/* Action buttons */}
           <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-gray-100">
-            {booking.listing && (
+            {(
+              booking.listing_id) && (
               <Link
-                href={`/rooms/${booking.listing?.id || booking.listing_id}`}
+                href={`/rooms/${booking.listing_id}`}
                 className="rounded-xl border border-gray-300 px-4 py-2 text-xs font-bold text-gray-800 hover:border-black transition"
               >
                 View Listing
               </Link>
             )}
 
-            {!isCancelled && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => setIsReviewOpen(true)}
-                  className="flex items-center gap-1 rounded-xl bg-pink-50 px-4 py-2 text-xs font-bold text-[#FF385C] hover:bg-pink-100 transition cursor-pointer"
-                >
-                  <Star className="h-3.5 w-3.5 fill-[#FF385C]" />
-                  Leave Review
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setIsConfirmCancelOpen(true)}
-                  className="rounded-xl px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition cursor-pointer ml-auto"
-                >
-                  Cancel Trip
-                </button>
-              </>
+            {!isCancelled && isPast && (
+              <button
+                type="button"
+                onClick={() => setIsReviewOpen(true)}
+                className="flex items-center gap-1 rounded-xl bg-pink-50 px-4 py-2 text-xs font-bold text-[#FF385C] hover:bg-pink-100 transition cursor-pointer"
+              >
+                <Star className="h-3.5 w-3.5 fill-[#FF385C]" />
+                Leave Review
+              </button>
+            )}
+            {!isCancelled && !isPast && (
+              <button
+                type="button"
+                onClick={() => setIsConfirmCancelOpen(true)}
+                className="rounded-xl px-4 py-2 text-xs font-bold text-red-600 hover:bg-red-50 transition cursor-pointer ml-auto"
+              >
+                Cancel Trip
+              </button>
             )}
           </div>
         </div>
@@ -154,7 +152,7 @@ export default function BookingCard({ booking, onCancel }: BookingCardProps) {
       <AddReviewModal
         isOpen={isReviewOpen}
         onClose={() => setIsReviewOpen(false)}
-        listingId={booking.listing?.id || booking.listing_id}
+        listingId={booking.listing_id}
       />
     </>
   );

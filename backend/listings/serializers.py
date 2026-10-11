@@ -1,134 +1,141 @@
 from rest_framework import serializers
-from django.db.models import Avg
-from .models import Listing, ListingImage, Review, Wishlist
+
+from users.serializers import PublicUserSerializer
+
+from .models import Listing, ListingImage, Review
+
+MAX_PHOTOS = 20
+
+
+def cover_url(listing):
+    """Cover photo from the prefetched images (no extra query)."""
+    images = list(listing.images.all())
+    for img in images:
+        if img.is_cover:
+            return img.url
+    return images[0].url if images else ""
+
 
 class ListingImageSerializer(serializers.ModelSerializer):
-    url = serializers.SerializerMethodField()
-
     class Meta:
         model = ListingImage
-        fields = ('id', 'url', 'is_primary', 'display_order')
+        fields = ("id", "url", "is_cover", "display_order")
 
-    def get_url(self, obj):
-        return obj.url
 
-class ReviewAuthorSerializer(serializers.Serializer):
-    id = serializers.IntegerField()
-    name = serializers.SerializerMethodField()
-    avatar_url = serializers.SerializerMethodField()
-    joined_date = serializers.SerializerMethodField()
+class ListingCardSerializer(serializers.ModelSerializer):
+    """Compact shape for grids: no description, no fees, plain photo URLs."""
 
-    def get_name(self, obj):
-        return obj.get_full_name() or obj.username
-
-    def get_avatar_url(self, obj):
-        if hasattr(obj, 'profile_picture') and obj.profile_picture:
-            return obj.profile_picture.url
-        return f'https://api.dicebear.com/7.x/avataaars/svg?seed={obj.username}'
-
-    def get_joined_date(self, obj):
-        return f'Joined {obj.date_joined.strftime("%B %Y")}'
-
-class ReviewSerializer(serializers.ModelSerializer):
-    author = serializers.SerializerMethodField()
-    
-    class Meta:
-        model = Review
-        fields = ('id', 'author', 'rating', 'cleanliness', 'accuracy',
-                  'communication', 'location_rating', 'value_rating', 'comment', 'created_at')
-        read_only_fields = ('author', 'created_at')
-
-    def get_author(self, obj):
-        return ReviewAuthorSerializer(obj.guest).data
-
-class HostSerializer(serializers.Serializer):
-    id = serializers.IntegerField()
-    name = serializers.SerializerMethodField()
-    email = serializers.EmailField()
-    avatar_url = serializers.SerializerMethodField()
-    is_host = serializers.BooleanField()
-    is_superhost = serializers.SerializerMethodField()
-    joined_date = serializers.SerializerMethodField()
-
-    def get_name(self, obj):
-        return obj.get_full_name() or obj.username
-
-    def get_avatar_url(self, obj):
-        if hasattr(obj, 'profile_picture') and obj.profile_picture:
-            return obj.profile_picture.url
-        return f'https://api.dicebear.com/7.x/avataaars/svg?seed={obj.username}'
-
-    def get_is_superhost(self, obj):
-        return obj.listings.count() >= 3
-
-    def get_joined_date(self, obj):
-        return f'Joined {obj.date_joined.strftime("%B %Y")}'
-
-class ListingSerializer(serializers.ModelSerializer):
-    host = HostSerializer(read_only=True)
-    images = ListingImageSerializer(many=True, read_only=True)
     cover_image = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
+    host = PublicUserSerializer(read_only=True)
     is_wishlisted = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Listing
-        fields = '__all__'
-        read_only_fields = ('host', 'rating', 'reviews_count', 'created_at', 'updated_at')
+        fields = (
+            "id", "title", "category", "property_type", "price_per_night",
+            "city", "country", "location", "latitude", "longitude",
+            "max_guests", "rating", "reviews_count", "is_guest_favourite",
+            "cover_image", "images", "host", "is_wishlisted",
+        )
 
     def get_cover_image(self, obj):
-        primary = obj.images.filter(is_primary=True).first() or obj.images.first()
-        return primary.url if primary else ''
+        return cover_url(obj)
+
+    def get_images(self, obj):
+        return [img.url for img in obj.images.all()]
 
     def get_is_wishlisted(self, obj):
-        request = self.context.get('request')
-        user_id = None
-        if request:
-            user_id = request.query_params.get('user_id') or (request.user.id if request.user.is_authenticated else None)
-        if user_id:
-            return Wishlist.objects.filter(user_id=user_id, listing=obj).exists()
-        return False
+        return obj.id in self.context.get("wishlist_ids", ())
 
-class ListingCreateSerializer(serializers.ModelSerializer):
+
+class ListingDetailSerializer(ListingCardSerializer):
+    images = ListingImageSerializer(many=True, read_only=True)
+    host_id = serializers.IntegerField(read_only=True)
+
+    class Meta(ListingCardSerializer.Meta):
+        fields = ListingCardSerializer.Meta.fields + (
+            "host_id", "description", "cleaning_fee", "service_fee",
+            "bedrooms", "beds", "baths", "amenities", "created_at",
+        )
+
+
+class ListingWriteSerializer(serializers.ModelSerializer):
+    """Create/update. The owner is set by the view, never by the client."""
+
     image_urls = serializers.ListField(
-        child=serializers.CharField(), write_only=True, required=False
+        child=serializers.CharField(max_length=500), write_only=True, required=False,
+        max_length=MAX_PHOTOS,
     )
 
     class Meta:
         model = Listing
-        fields = [
-            'title', 'description', 'category', 'property_type',
-            'price_per_night', 'cleaning_fee', 'service_fee',
-            'city', 'country', 'location', 'latitude', 'longitude',
-            'max_guests', 'bedrooms', 'beds', 'baths', 'amenities', 'image_urls'
-        ]
+        fields = (
+            "title", "description", "category", "property_type",
+            "price_per_night", "cleaning_fee", "service_fee",
+            "city", "country", "location", "latitude", "longitude",
+            "max_guests", "bedrooms", "beds", "baths", "amenities", "image_urls",
+        )
+
+    def validate_image_urls(self, urls):
+        for url in urls:
+            if not url.startswith(("http://", "https://")):
+                raise serializers.ValidationError("Photo links must start with http:// or https://")
+        return urls
+
+    def validate_amenities(self, value):
+        if not isinstance(value, list) or not all(isinstance(a, str) for a in value):
+            raise serializers.ValidationError("Amenities must be a list of names.")
+        return value
+
+    def validate(self, attrs):
+        if self.instance is None and not attrs.get("image_urls"):
+            raise serializers.ValidationError("Add at least one photo.")
+        return attrs
+
+    @staticmethod
+    def _set_images(listing, urls):
+        listing.images.all().delete()
+        ListingImage.objects.bulk_create(
+            ListingImage(listing=listing, url=url, is_cover=(i == 0), display_order=i)
+            for i, url in enumerate(urls)
+        )
 
     def create(self, validated_data):
-        image_urls = validated_data.pop('image_urls', [])
+        urls = validated_data.pop("image_urls", [])
         listing = Listing.objects.create(**validated_data)
-        for i, url in enumerate(image_urls):
-            ListingImage.objects.create(
-                listing=listing, image_url=url,
-                is_primary=(i == 0), display_order=i
-            )
+        self._set_images(listing, urls)
         return listing
 
     def update(self, instance, validated_data):
-        image_urls = validated_data.pop('image_urls', None)
+        urls = validated_data.pop("image_urls", None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-        if image_urls is not None:
-            instance.images.all().delete()
-            for i, url in enumerate(image_urls):
-                ListingImage.objects.create(
-                    listing=instance, image_url=url,
-                    is_primary=(i == 0), display_order=i
-                )
+        if urls is not None:
+            self._set_images(instance, urls)
         return instance
 
-class WishlistSerializer(serializers.ModelSerializer):
-    listing = ListingSerializer(read_only=True)
+    def to_representation(self, instance):
+        instance = Listing.objects.prefetch_related("images").select_related("host").get(pk=instance.pk)
+        return ListingDetailSerializer(instance, context=self.context).data
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    user = PublicUserSerializer(source="guest", read_only=True)
+    user_id = serializers.IntegerField(source="guest_id", read_only=True)
+    listing_id = serializers.IntegerField(read_only=True)
 
     class Meta:
-        model = Wishlist
-        fields = ('id', 'listing', 'created_at')
+        model = Review
+        fields = (
+            "id", "listing_id", "user_id", "user", "rating", "cleanliness", "accuracy",
+            "communication", "location_rating", "value_rating", "comment", "created_at",
+        )
+        read_only_fields = ("id", "created_at")
+
+    def validate_comment(self, value):
+        value = value.strip()
+        if len(value) < 5:
+            raise serializers.ValidationError("Please write a few words about your stay.")
+        return value

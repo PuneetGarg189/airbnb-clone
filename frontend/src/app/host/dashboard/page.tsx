@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Home,
@@ -14,54 +14,56 @@ import {
 } from "lucide-react";
 import { fetchHostDashboard, deleteListing } from "@/lib/api";
 import { HostDashboardData } from "@/types";
-import { formatPrice, formatDate } from "@/lib/utils";
+import { formatPrice } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import toast from "react-hot-toast";
+import RequireAuth from "@/components/auth/RequireAuth";
+import { prettyDate } from "@/lib/dates";
 
 export default function HostDashboardPage() {
+  return (
+    <RequireAuth host what="your host dashboard">
+      <Dashboard />
+    </RequireAuth>
+  );
+}
+
+function Dashboard() {
   const { user } = useAuth();
   const [data, setData] = useState<HostDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const loadDashboard = async () => {
+  const [error, setError] = useState("");
+  const userId = user?.id;
+
+  const loadDashboard = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const res = await fetchHostDashboard(user.id);
-      setData(res);
-    } catch {
+      setData(await fetchHostDashboard());
+    } catch (err) {
       setData(null);
+      setError(err instanceof Error ? err.message : "Could not load your dashboard.");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadDashboard();
-  }, [user.id]);
+  }, [loadDashboard, userId]);
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this listing? All associated bookings and photos will be removed.")) {
+    if (!window.confirm("Delete this listing? Its photos and reviews will be removed.")) {
       return;
     }
-    // Optimistically remove from UI immediately so the card disappears right away
-    setData((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        listings: prev.listings.filter((l) => l.id !== id),
-        stats: {
-          ...prev.stats,
-          total_listings: Math.max(0, prev.stats.total_listings - 1),
-        },
-      };
-    });
     try {
       await deleteListing(id);
-      toast.success("Listing deleted successfully");
-    } catch (err: any) {
-      toast.error(err.message || "Failed to delete listing");
-      // Re-fetch to restore state if something truly went wrong
+      toast.success("Listing deleted");
       loadDashboard();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to delete listing");
     }
   };
 
@@ -78,12 +80,18 @@ export default function HostDashboardPage() {
     );
   }
 
-  const stats = data?.stats || {
-    total_listings: 0,
-    total_bookings: 0,
-    total_revenue: 0,
-    average_rating: 5.0,
-  };
+  if (error || !data) {
+    return (
+      <div className="mx-auto max-w-md py-24 text-center" role="alert">
+        <p className="mb-4 text-sm text-gray-600">{error || "No data."}</p>
+        <button onClick={loadDashboard} className="cursor-pointer rounded-xl bg-black px-6 py-2.5 text-xs font-bold text-white">
+          Try again
+        </button>
+      </div>
+    );
+  }
+
+  const stats = data.stats;
 
   return (
     <div className="min-h-screen bg-gray-50 py-10">
@@ -93,9 +101,9 @@ export default function HostDashboardPage() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-2xl sm:text-3xl font-black text-gray-900">
-                Welcome back, {user.name}
+                Welcome back, {user?.name}
               </h1>
-              {user.is_superhost && (
+              {user?.is_superhost && (
                 <span className="bg-red-50 text-[#FF385C] border border-red-200 text-xs font-bold px-2.5 py-0.5 rounded-full">
                   Superhost
                 </span>
@@ -153,7 +161,7 @@ export default function HostDashboardPage() {
             </div>
             <div>
               <p className="text-xs font-bold text-gray-500 uppercase">Avg Rating</p>
-              <h3 className="text-2xl font-black text-gray-900">{stats.average_rating.toFixed(2)}</h3>
+              <h3 className="text-2xl font-black text-gray-900">{Number(stats.average_rating).toFixed(2)}</h3>
             </div>
           </div>
         </div>
@@ -163,11 +171,11 @@ export default function HostDashboardPage() {
           <div className="flex items-center justify-between border-b pb-4">
             <h3 className="text-lg font-black text-gray-900">Your Listings</h3>
             <span className="text-xs font-bold text-gray-500">
-              {data?.listings.length || 0} active spaces
+              {data.listings.length} active spaces
             </span>
           </div>
 
-          {data?.listings && data.listings.length > 0 ? (
+          {data.listings.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -184,6 +192,7 @@ export default function HostDashboardPage() {
                     <tr key={l.id} className="hover:bg-gray-50 transition">
                       <td className="py-4">
                         <div className="flex items-center gap-3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={l.cover_image}
                             alt={l.title}
@@ -200,7 +209,7 @@ export default function HostDashboardPage() {
                       <td className="py-4">
                         <div className="flex items-center gap-1 text-xs font-bold">
                           <Star className="h-3 w-3 fill-black text-black" />
-                          <span>{l.rating.toFixed(2)}</span>
+                          <span>{Number(l.rating).toFixed(2)}</span>
                           <span className="text-gray-400 font-normal">({l.reviews_count})</span>
                         </div>
                       </td>
@@ -244,11 +253,11 @@ export default function HostDashboardPage() {
           <div className="flex items-center justify-between border-b pb-4">
             <h3 className="text-lg font-black text-gray-900">Recent Guest Reservations</h3>
             <span className="text-xs font-bold text-gray-500">
-              {data?.recent_bookings.length || 0} bookings
+              {data.recent_bookings.length} bookings
             </span>
           </div>
 
-          {data?.recent_bookings && data.recent_bookings.length > 0 ? (
+          {data.recent_bookings.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -256,7 +265,7 @@ export default function HostDashboardPage() {
                     <th className="pb-3">Stay</th>
                     <th className="pb-3">Dates</th>
                     <th className="pb-3">Guests</th>
-                    <th className="pb-3">Payout</th>
+                    <th className="pb-3">Total</th>
                     <th className="pb-3">Status</th>
                   </tr>
                 </thead>
@@ -264,17 +273,18 @@ export default function HostDashboardPage() {
                   {data.recent_bookings.map((b) => (
                     <tr key={b.id} className="hover:bg-gray-50 transition">
                       <td className="py-3 font-semibold text-gray-900">
-                        {b.listing?.title || `Stay #${b.listing?.id || b.listing_id}`}
+                        {b.listing?.title ?? `Stay #${b.listing_id}`}
+                        {b.guest && <span className="block font-normal text-gray-500">{b.guest.name}</span>}
                       </td>
                       <td className="py-3 text-gray-600 font-medium">
-                        {formatDate(b.start_date)}  {formatDate(b.end_date)}
+                        {prettyDate(b.start_date)} → {prettyDate(b.end_date)}
                       </td>
                       <td className="py-3 text-gray-600">{b.guests_count}</td>
                       <td className="py-3 font-bold text-gray-900">{formatPrice(b.total_price)}</td>
                       <td className="py-3">
                         <span
                           className={`px-2 py-0.5 rounded-full font-bold uppercase text-[10px] ${
-                            b.status === "confirmed"
+                            b.status.toLowerCase() === "confirmed"
                               ? "bg-emerald-100 text-emerald-800"
                               : "bg-red-100 text-red-700"
                           }`}

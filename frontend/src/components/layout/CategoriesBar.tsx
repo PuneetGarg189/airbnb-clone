@@ -5,7 +5,6 @@ import {
   SlidersHorizontal,
   ChevronLeft,
   ChevronRight,
-  Flame,
   Home,
   Palmtree,
   Sparkles,

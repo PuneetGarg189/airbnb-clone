@@ -20,7 +20,7 @@ export default function MapView({
   singleListing = false,
 }: MapViewProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<any>(null);
+  const mapInstanceRef = useRef<import("leaflet").Map | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;

@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { Search, X, Minus, Plus, Calendar, MapPin, Users, Sparkles } from "lucide-react";
 import { useSearch } from "@/context/SearchContext";
+import DateRangePicker from "@/components/ui/DateRangePicker";
 
 export default function SearchModal() {
   const {
@@ -24,6 +25,7 @@ export default function SearchModal() {
   // Sync state whenever modal opens or filters change
   useEffect(() => {
     if (isSearchModalOpen) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDestination(filters.search || filters.city || "");
       setStartDate(filters.start_date || "");
       setEndDate(filters.end_date || "");
@@ -41,9 +43,9 @@ export default function SearchModal() {
   const handleApply = () => {
     updateFilter({
       search: destination.trim() || undefined,
-      start_date: startDate || undefined,
-      end_date: endDate || undefined,
-      guests: totalGuests > 0 ? totalGuests : undefined,
+      start_date: startDate && endDate ? startDate : undefined,
+      end_date: startDate && endDate ? endDate : undefined,
+      guests: totalGuests > 1 ? totalGuests : undefined,
     });
     setIsSearchModalOpen(false);
   };
@@ -65,14 +67,14 @@ export default function SearchModal() {
   };
 
   const popularDestinations = [
-    { name: "Italy", label: "Lake Como & Amalfi Coast" },
-    { name: "Switzerland", label: "Alps & Zermatt" },
-    { name: "Greece", label: "Santorini & Oia" },
-    { name: "Bali", label: "Ubud & Tropical Villas" },
-    { name: "California", label: "Big Sur & Joshua Tree" },
-    { name: "France", label: "Paris & Provence" },
-    { name: "Japan", label: "Kyoto & Zen Gardens" },
-    { name: "Aspen", label: "Colorado Ski Lodges" },
+    { name: "Italy", label: "Lake Como & Positano" },
+    { name: "Switzerland", label: "Zermatt & Lucerne" },
+    { name: "Greece", label: "Santorini" },
+    { name: "Bali", label: "Villas & jungle" },
+    { name: "Paris", label: "City apartments" },
+    { name: "Japan", label: "Kyoto" },
+    { name: "Aspen", label: "Ski lodges" },
+    { name: "Tulum", label: "Beach stays" },
   ];
 
   return (
@@ -157,28 +159,20 @@ export default function SearchModal() {
               <Calendar className="w-4 h-4 text-[#FF385C]" />
               Dates
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="border border-gray-200 rounded-xl p-2.5">
-                <label className="block text-gray-500 text-[10px] font-bold uppercase">CHECK-IN</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  min={new Date().toISOString().split("T")[0]}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full text-sm font-semibold outline-hidden text-gray-900 mt-1 cursor-pointer"
-                />
-              </div>
-              <div className="border border-gray-200 rounded-xl p-2.5">
-                <label className="block text-gray-500 text-[10px] font-bold uppercase">CHECK-OUT</label>
-                <input
-                  type="date"
-                  value={endDate}
-                  min={startDate || new Date().toISOString().split("T")[0]}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full text-sm font-semibold outline-hidden text-gray-900 mt-1 cursor-pointer"
-                />
-              </div>
-            </div>
+            <DateRangePicker
+              start={startDate}
+              end={endDate}
+              onChange={(st, en) => { setStartDate(st); setEndDate(en); }}
+            />
+            {(startDate || endDate) && (
+              <button
+                type="button"
+                onClick={() => { setStartDate(""); setEndDate(""); }}
+                className="mt-3 text-xs font-bold underline cursor-pointer"
+              >
+                Clear dates
+              </button>
+            )}
           </div>
 
           {/* 3. Guests / Who */}

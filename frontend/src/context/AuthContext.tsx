@@ -1,103 +1,82 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { User } from "@/types";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import type { User } from "@/types";
+import * as api from "@/lib/api";
 
 interface AuthContextType {
-  user: User;
-  users: User[];
-  isHost: boolean;
+  /** null when signed out */
+  user: User | null;
   isLoggedIn: boolean;
-  login: () => void;
+  isHost: boolean;
+  /** true until we know whether a saved token is still valid */
+  loading: boolean;
+  login: (identifier: string, password: string) => Promise<User>;
+  register: (name: string, email: string, password: string) => Promise<User>;
   logout: () => void;
-  switchUser: (user: User) => void;
-  toggleHostMode: () => void;
+  becomeHost: () => Promise<User>;
 }
 
-const DEFAULT_GUEST: User = {
-  id: 1,
-  name: "Alex Rivera",
-  email: "alex.rivera@example.com",
-  avatar_url: "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=200&q=80",
-  is_host: false,
-  is_superhost: false,
-  joined_date: "Joined May 2022",
-};
-
-const DEFAULT_HOST: User = {
-  id: 2,
-  name: "Elena Rostova",
-  email: "elena.rostova@example.com",
-  avatar_url: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80",
-  is_host: true,
-  is_superhost: true,
-  joined_date: "Superhost · 5 years hosting",
-};
-
 const AuthContext = createContext<AuthContextType>({
-  user: DEFAULT_GUEST,
-  users: [DEFAULT_GUEST, DEFAULT_HOST],
-  isHost: false,
+  user: null,
   isLoggedIn: false,
-  login: () => {},
+  isHost: false,
+  loading: true,
+  login: async () => { throw new Error("AuthProvider missing"); },
+  register: async () => { throw new Error("AuthProvider missing"); },
   logout: () => {},
-  switchUser: () => {},
-  toggleHostMode: () => {},
+  becomeHost: async () => { throw new Error("AuthProvider missing"); },
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User>(DEFAULT_GUEST);
-  const [users, setUsers] = useState<User[]>([DEFAULT_GUEST, DEFAULT_HOST]);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
+  // Restore the session from the saved token (the server is the source of truth).
   useEffect(() => {
-    // Attempt to load users from backend or localStorage
-    const saved = localStorage.getItem("airbnb_active_user");
-    if (saved) {
-      try {
-        setUser(JSON.parse(saved));
-        setIsLoggedIn(true);
-      } catch {}
-    }
+    let alive = true;
+    (async () => {
+      if (api.tokens.access) {
+        try {
+          const me = await api.fetchMe();
+          if (alive) setUser(me);
+        } catch {
+          api.tokens.clear();
+        }
+      }
+      if (alive) setLoading(false);
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  
-  const login = () => {
-    setIsLoggedIn(true);
-    localStorage.setItem("airbnb_active_user", JSON.stringify(user));
-  };
+  const login = useCallback(async (identifier: string, password: string) => {
+    const me = await api.login(identifier, password);
+    setUser(me);
+    return me;
+  }, []);
 
-  const logout = () => {
-    setIsLoggedIn(false);
-    localStorage.removeItem("airbnb_active_user");
-    switchUser(DEFAULT_GUEST);
-  };
+  const register = useCallback(async (name: string, email: string, password: string) => {
+    const me = await api.register(name, email, password);
+    setUser(me);
+    return me;
+  }, []);
 
-  const switchUser = (selectedUser: User) => {
-    setUser(selectedUser);
-    localStorage.setItem("airbnb_active_user", JSON.stringify(selectedUser));
-  };
+  const logout = useCallback(() => {
+    api.tokens.clear();
+    setUser(null);
+  }, []);
 
-  const toggleHostMode = () => {
-    if (user.is_host) {
-      switchUser(DEFAULT_GUEST);
-    } else {
-      switchUser(DEFAULT_HOST);
-    }
-  };
+  const becomeHost = useCallback(async () => {
+    const me = await api.becomeHost();
+    setUser(me);
+    return me;
+  }, []);
 
   return (
     <AuthContext.Provider
-      value={{
-        user,
-        users,
-        isHost: user.is_host,
-        isLoggedIn,
-        login,
-        logout,
-        switchUser,
-        toggleHostMode,
-      }}
+      value={{ user, isLoggedIn: !!user, isHost: !!user?.is_host, loading, login, register, logout, becomeHost }}
     >
       {children}
     </AuthContext.Provider>

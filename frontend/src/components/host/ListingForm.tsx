@@ -2,10 +2,9 @@
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, Image as ImageIcon, Sparkles, Check, Upload, Cloud } from "lucide-react";
+import { Trash2, Sparkles, Check, Upload } from "lucide-react";
 import { ListingCreateInput, ListingDetail } from "@/types";
-import { createListing, updateListing } from "@/lib/api";
-import { useAuth } from "@/context/AuthContext";
+import { createListing, updateListing, uploadPhoto } from "@/lib/api";
 import toast from "react-hot-toast";
 
 interface ListingFormProps {
@@ -48,7 +47,6 @@ const AMENITIES_OPTIONS = [
 
 export default function ListingForm({ initialData, isEdit = false }: ListingFormProps) {
   const router = useRouter();
-  const { user } = useAuth();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Form states
@@ -56,7 +54,7 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
   const [description, setDescription] = useState(initialData?.description || "");
   const [category, setCategory] = useState(initialData?.category || "Cabins");
   const [propertyType, setPropertyType] = useState(initialData?.property_type || "Entire home");
-  const [pricePerNight, setPricePerNight] = useState(initialData?.price_per_night || 250);
+  const [pricePerNight, setPricePerNight] = useState(initialData?.price_per_night ?? 250);
   const [cleaningFee, setCleaningFee] = useState(initialData?.cleaning_fee || 50);
   const [serviceFee, setServiceFee] = useState(initialData?.service_fee || 35);
   const [city, setCity] = useState(initialData?.city || "");
@@ -72,10 +70,9 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
     initialData?.amenities || ["Wifi", "Kitchen", "Free parking"]
   );
   const [photoUrls, setPhotoUrls] = useState<string[]>(
-    initialData?.images?.map((img) => img.url) || [
-      "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=1200&q=80",
-    ]
+    initialData?.images?.map((img) => img.url) || []
   );
+  const [uploading, setUploading] = useState(false);
   const [newPhotoUrl, setNewPhotoUrl] = useState("");
 
   const handleToggleAmenity = (amenity: string) => {
@@ -90,20 +87,20 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
     setNewPhotoUrl("");
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setPhotoUrls((prev) => [...prev, event.target!.result as string]);
-          toast.success(`Uploaded ${file.name}`);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (files.length === 0) return;
+    setUploading(true);
+    for (const file of files) {
+      try {
+        const url = await uploadPhoto(file);
+        setPhotoUrls((prev) => [...prev, url]);
+      } catch (err) {
+        toast.error(`${file.name}: ${err instanceof Error ? err.message : "upload failed"}`);
+      }
+    }
+    setUploading(false);
   };
 
   const handleRemovePhoto = (index: number) => {
@@ -142,21 +139,20 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
         beds: Number(beds),
         baths: Number(baths),
         amenities,
-        images: photoUrls,
-        host_id: user.id,
+        image_urls: photoUrls,
       };
 
       if (isEdit && initialData) {
         await updateListing(initialData.id, payload);
-        toast.success("Listing updated successfully! 🎉");
+        toast.success("Listing updated successfully!");
         router.push(`/rooms/${initialData.id}`);
       } else {
         const created = await createListing(payload);
-        toast.success("Listing published successfully! 🚀");
+        toast.success("Listing published successfully!");
         router.push(`/rooms/${created.id}`);
       }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to save listing");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save listing");
     } finally {
       setIsSubmitting(false);
     }
@@ -438,9 +434,6 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
               Add photos via URL or upload image files directly
             </p>
           </div>
-          <span className="flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 font-semibold px-2.5 py-1 rounded-full border border-blue-200">
-            <Cloud className="w-3 h-3 text-blue-600" /> Cloud / Local Upload
-          </span>
         </div>
 
         {/* Upload options */}
@@ -451,7 +444,7 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
             <div className="flex gap-2">
               <input
                 type="url"
-                placeholder="https://images.unsplash.com/..."
+                placeholder="https://…/photo.jpg"
                 value={newPhotoUrl}
                 onChange={(e) => setNewPhotoUrl(e.target.value)}
                 className="flex-1 rounded-xl border border-gray-300 p-2.5 text-xs focus:border-black outline-hidden"
@@ -471,7 +464,7 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
             <label className="text-xs font-bold text-gray-700">Upload Image Files</label>
             <label className="flex items-center justify-center gap-2 border-2 border-dashed border-gray-300 hover:border-black rounded-xl p-2.5 text-xs font-bold text-gray-700 hover:bg-gray-50 transition cursor-pointer">
               <Upload className="w-4 h-4 text-gray-500" />
-              <span>Choose Files to Upload</span>
+              <span>{uploading ? "Uploading…" : "Choose Files to Upload"}</span>
               <input
                 type="file"
                 accept="image/*"
@@ -490,6 +483,7 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
               key={index}
               className="relative aspect-square rounded-xl overflow-hidden border border-gray-200 group shadow-xs"
             >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={url} alt={`Photo ${index + 1}`} className="w-full h-full object-cover" />
               {index === 0 && (
                 <span className="absolute top-2 left-2 rounded-md bg-black/70 px-2 py-0.5 text-[10px] font-bold text-white">
@@ -519,7 +513,7 @@ export default function ListingForm({ initialData, isEdit = false }: ListingForm
         </button>
         <button
           type="submit"
-          disabled={isSubmitting}
+          disabled={isSubmitting || uploading}
           className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#FF385C] to-[#E00B41] px-8 py-3.5 text-sm font-bold text-white shadow-lg hover:brightness-105 transition disabled:opacity-50 cursor-pointer"
         >
           <Sparkles className="w-4 h-4" />

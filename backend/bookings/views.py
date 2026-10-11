@@ -1,97 +1,78 @@
-from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
-from rest_framework.response import Response
-from rest_framework.views import APIView
-from .models import Booking
-from .serializers import BookingSerializer
+from datetime import date
 
-class BookingViewSet(viewsets.ModelViewSet):
+from django.db.models import Q
+from rest_framework import mixins, permissions, status, viewsets
+from rest_framework.decorators import action
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
+from rest_framework.response import Response
+
+from .models import Booking
+from .serializers import BookingCreateSerializer, BookingSerializer
+from .services import create_booking
+
+
+class BookingViewSet(viewsets.GenericViewSet, mixins.CreateModelMixin, mixins.DestroyModelMixin):
+    """Bookings the signed-in user may see: their own trips, plus bookings on
+    listings they host."""
+
     serializer_class = BookingSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None
+    filter_backends = []
 
     def get_queryset(self):
-        params = self.request.query_params
-        user_id = params.get('user_id')
-        host_id = params.get('host_id')
-        listing_id = params.get('listing_id')
-
-        qs = Booking.objects.all().select_related('listing', 'guest').prefetch_related('listing__images').order_by('-created_at')
-
-        if listing_id:
-            qs = qs.filter(listing_id=listing_id)
-        elif host_id:
-            qs = qs.filter(listing__host_id=host_id)
-        elif user_id:
-            qs = qs.filter(guest_id=user_id)
-        elif self.request.user.is_authenticated:
-            if self.request.user.is_host:
-                qs = qs.filter(listing__host=self.request.user)
-            else:
-                qs = qs.filter(guest=self.request.user)
-        return qs
-
-    def perform_create(self, serializer):
-        data = self.request.data
-        user_id = data.get('user_id')
-        if user_id:
-            from users.models import User
-            guest = User.objects.get(id=user_id)
-        elif self.request.user.is_authenticated:
-            guest = self.request.user
-        else:
-            from users.models import User
-            guest = User.objects.first()
-
-        # Map frontend field names to model field names
-        check_in = data.get('start_date') or data.get('check_in_date')
-        check_out = data.get('end_date') or data.get('check_out_date')
-        guest_count = data.get('guests_count') or data.get('guest_count', 1)
-
-        from listings.models import Listing
-        listing = Listing.objects.get(id=data['listing_id'])
-        from datetime import date
-        check_in_date = date.fromisoformat(check_in)
-        check_out_date = date.fromisoformat(check_out)
-        nights = (check_out_date - check_in_date).days
-        total = float(listing.price_per_night) * nights + float(listing.cleaning_fee) + float(listing.service_fee)
-
-        serializer.save(
-            guest=guest,
-            check_in_date=check_in_date,
-            check_out_date=check_out_date,
-            guest_count=int(guest_count),
-            total_price=total,
-            status='CONFIRMED'
+        user = self.request.user
+        return (
+            Booking.objects.filter(Q(guest=user) | Q(listing__host=user))
+            .select_related("listing", "guest")
+            .prefetch_related("listing__images")
         )
 
+    def create(self, request, *args, **kwargs):
+        data = BookingCreateSerializer(data=request.data)
+        data.is_valid(raise_exception=True)
+        v = data.validated_data
+        booking = create_booking(
+            user=request.user,
+            listing_id=v["listing_id"],
+            start=v["start_date"],
+            end=v["end_date"],
+            guests=v["guests_count"],
+        )
+        booking = self.get_queryset().get(pk=booking.pk)
+        return Response(BookingSerializer(booking).data, status=status.HTTP_201_CREATED)
+
     def destroy(self, request, *args, **kwargs):
-        instance = self.get_object()
-        instance.status = 'CANCELLED'
-        instance.save()
-        return Response({'message': 'Booking cancelled', 'id': instance.id})
+        """Cancel (soft delete) - the guest or the listing's host may cancel."""
+        booking = self.get_object()
+        if booking.status == Booking.Status.CANCELLED:
+            raise ValidationError("This booking is already cancelled.")
+        if booking.check_out_date < date.today():
+            raise ValidationError("A completed stay cannot be cancelled.")
+        booking.status = Booking.Status.CANCELLED
+        booking.save(update_fields=["status", "updated_at"])
+        return Response({"message": "Booking cancelled", "id": booking.id})
 
-    @action(detail=False, methods=['get'], url_path='booked_dates')
-    def booked_dates(self, request):
-        listing_id = request.query_params.get('listing_id')
-        if not listing_id:
-            return Response([])
-        bookings = Booking.objects.filter(
-            listing_id=listing_id,
-            status='CONFIRMED'
-        ).values('check_in_date', 'check_out_date')
-        return Response([
-            {'start_date': str(b['check_in_date']), 'end_date': str(b['check_out_date'])}
-            for b in bookings
-        ])
-
-    @action(detail=False, methods=['get'], url_path='my_trips')
+    @action(detail=False, methods=["get"])
     def my_trips(self, request):
-        user_id = request.query_params.get('user_id')
-        if user_id:
-            qs = Booking.objects.filter(guest_id=user_id)
-        elif request.user.is_authenticated:
-            qs = Booking.objects.filter(guest=request.user)
-        else:
-            return Response([])
-        qs = qs.select_related('listing', 'guest').prefetch_related('listing__images').order_by('-created_at')
+        qs = self.get_queryset().filter(guest=request.user)
         return Response(BookingSerializer(qs, many=True).data)
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.AllowAny])
+    def booked_dates(self, request):
+        """Public: the date ranges that cannot be booked (no guest details)."""
+        listing_id = request.query_params.get("listing_id")
+        if not listing_id or not listing_id.isdigit():
+            raise ValidationError({"listing_id": "A numeric listing_id is required."})
+        rows = (
+            Booking.objects.filter(
+                listing_id=listing_id,
+                status=Booking.Status.CONFIRMED,
+                check_out_date__gte=date.today(),
+            )
+            .order_by("check_in_date")
+            .values("check_in_date", "check_out_date")
+        )
+        return Response(
+            [{"start_date": str(r["check_in_date"]), "end_date": str(r["check_out_date"])} for r in rows]
+        )

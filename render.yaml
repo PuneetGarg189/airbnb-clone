@@ -1,29 +1,18 @@
+# Render blueprint for https://airbnb-clone-api-t8pv.onrender.com
+# Frontend: https://airbnb-clone-frontend-gamma.vercel.app (needs NEXT_PUBLIC_API_URL=https://airbnb-clone-api-t8pv.onrender.com/api)
 services:
-  # FastAPI Backend Service
   - type: web
-    name: airbnb-backend
+    name: airbnb-clone-api-t8pv
     runtime: python
-    region: oregon
-    plan: free
     rootDir: backend
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    buildCommand: ./build.sh
+    startCommand: gunicorn config.wsgi:application --bind 0.0.0.0:$PORT
     envVars:
-      - key: PORT
-        value: 10000
-
-  # Next.js Frontend Service
-  - type: web
-    name: airbnb-frontend
-    runtime: node
-    region: oregon
-    plan: free
-    rootDir: frontend
-    buildCommand: "npm install && npm run build"
-    startCommand: "npm run start -- -p $PORT"
-    envVars:
-      - key: NEXT_PUBLIC_API_URL
-        fromService:
-          type: web
-          name: airbnb-backend
-          property: host
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: airbnb-clone-api-t8pv.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://airbnb-clone-frontend-gamma.vercel.app

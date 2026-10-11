@@ -3,7 +3,6 @@
 import React, { useState } from "react";
 import { X, Star } from "lucide-react";
 import { addReview } from "@/lib/api";
-import { useAuth } from "@/context/AuthContext";
 import toast from "react-hot-toast";
 
 interface AddReviewModalProps {
@@ -13,13 +12,46 @@ interface AddReviewModalProps {
   onReviewAdded?: () => void;
 }
 
+function StarPicker({
+  value,
+  onChange,
+  label,
+}: {
+  value: number;
+  onChange: (val: number) => void;
+  label: string;
+}) {
+  return (
+  <div className="flex items-center justify-between py-1">
+    <span className="text-xs font-semibold text-gray-700">{label}</span>
+    <div className="flex gap-1">
+      {[1, 2, 3, 4, 5].map((star) => (
+        <button
+          key={star}
+          type="button"
+          onClick={() => onChange(star)}
+          className="p-1 hover:scale-115 transition cursor-pointer"
+        >
+          <Star
+            className={`h-4 w-4 ${
+              star <= value
+                ? "fill-[#FF385C] text-[#FF385C]"
+                : "fill-gray-200 text-gray-200"
+            }`}
+          />
+        </button>
+      ))}
+    </div>
+  </div>
+);
+}
+
 export default function AddReviewModal({
   isOpen,
   onClose,
   listingId,
   onReviewAdded,
 }: AddReviewModalProps) {
-  const { user } = useAuth();
   const [rating, setRating] = useState(5);
   const [cleanliness, setCleanliness] = useState(5);
   const [accuracy, setAccuracy] = useState(5);
@@ -41,7 +73,6 @@ export default function AddReviewModal({
     setIsSubmitting(true);
     try {
       await addReview(listingId, {
-        user_id: user.id,
         rating,
         cleanliness,
         accuracy,
@@ -54,44 +85,12 @@ export default function AddReviewModal({
       setComment("");
       onClose();
       if (onReviewAdded) onReviewAdded();
-    } catch (err: any) {
-      toast.error(err.message || "Failed to submit review");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to submit review");
     } finally {
       setIsSubmitting(false);
     }
   };
-
-  const StarPicker = ({
-    value,
-    onChange,
-    label,
-  }: {
-    value: number;
-    onChange: (val: number) => void;
-    label: string;
-  }) => (
-    <div className="flex items-center justify-between py-1">
-      <span className="text-xs font-semibold text-gray-700">{label}</span>
-      <div className="flex gap-1">
-        {[1, 2, 3, 4, 5].map((star) => (
-          <button
-            key={star}
-            type="button"
-            onClick={() => onChange(star)}
-            className="p-1 hover:scale-115 transition cursor-pointer"
-          >
-            <Star
-              className={`h-4 w-4 ${
-                star <= value
-                  ? "fill-[#FF385C] text-[#FF385C]"
-                  : "fill-gray-200 text-gray-200"
-              }`}
-            />
-          </button>
-        ))}
-      </div>
-    </div>
-  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-200">

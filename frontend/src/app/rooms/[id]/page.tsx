@@ -1,23 +1,16 @@
 "use client";
 
-import React, { useEffect, useState, use } from "react";
+import React, { useCallback, useEffect, useState, use } from "react";
 import Link from "next/link";
 import {
   Star,
   Share2,
   Heart,
-  ShieldCheck,
   Award,
-  Sparkles,
   MapPin,
-  Key,
-  Laptop,
   ChevronLeft,
-  MessageSquare,
-  CheckCircle2,
-  Clock,
 } from "lucide-react";
-import { fetchListing, fetchBookedDates, fetchReviews } from "@/lib/api";
+import { ApiError, fetchListing, fetchBookedDates, fetchReviews } from "@/lib/api";
 import { ListingDetail, BookedDateRange, ReviewsSummary as ReviewsSummaryType } from "@/types";
 import { useAuth } from "@/context/AuthContext";
 import { useWishlist } from "@/context/WishlistContext";
@@ -27,7 +20,6 @@ import AmenitiesList from "@/components/listings/AmenitiesList";
 import ReviewsSummary from "@/components/reviews/ReviewsSummary";
 import ReviewCard from "@/components/reviews/ReviewCard";
 import AddReviewModal from "@/components/reviews/AddReviewModal";
-import MessageHostModal from "@/components/host/MessageHostModal";
 import MapView from "@/components/map/MapView";
 import toast from "react-hot-toast";
 
@@ -39,47 +31,46 @@ export default function RoomDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const listingId = parseInt(id, 10);
 
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { isWishlisted, toggle } = useWishlist();
 
   const [listing, setListing] = useState<ListingDetail | null>(null);
   const [bookedDates, setBookedDates] = useState<BookedDateRange[]>([]);
   const [reviewsSummary, setReviewsSummary] = useState<ReviewsSummaryType | null>(null);
+  const [reviewsError, setReviewsError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<{ status: number; message: string } | null>(null);
   const [isAddReviewOpen, setIsAddReviewOpen] = useState(false);
-  const [isMessageHostOpen, setIsMessageHostOpen] = useState(false);
 
-  const loadData = async () => {
+  const userId = user?.id;
+
+  const loadData = useCallback(async () => {
+    setLoadError(null);
     try {
-      const listingData = await fetchListing(listingId, user.id);
-      setListing(listingData);
-      setLoading(false);
-
-      // Supplementary data
-      try {
-        const datesData = await fetchBookedDates(listingId);
-        setBookedDates(datesData);
-      } catch {
-        setBookedDates([]);
-      }
-
-      try {
-        const reviewsData = await fetchReviews(listingId);
-        setReviewsSummary(reviewsData);
-      } catch {
-        // keep null or fallback
-      }
+      setListing(await fetchListing(listingId));
     } catch (err) {
-      console.warn("Failed to load listing details:", err);
-      toast.error("Failed to load listing");
-    } finally {
+      setListing(null);
+      setLoadError({
+        status: err instanceof ApiError ? err.status : 0,
+        message: err instanceof Error ? err.message : "Failed to load listing",
+      });
       setLoading(false);
+      return;
     }
-  };
+    setLoading(false);
+
+    // Calendar and reviews are secondary: a failure here must not hide the listing.
+    const [dates, reviews] = await Promise.allSettled([fetchBookedDates(listingId), fetchReviews(listingId)]);
+    setBookedDates(dates.status === "fulfilled" ? dates.value : []);
+    setReviewsSummary(reviews.status === "fulfilled" ? reviews.value : null);
+    setReviewsError(reviews.status === "rejected");
+  }, [listingId]);
 
   useEffect(() => {
+    if (authLoading || Number.isNaN(listingId)) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadData();
-  }, [listingId, user.id]);
+  }, [loadData, authLoading, userId, listingId]);
 
   if (loading) {
     return (
@@ -94,16 +85,28 @@ export default function RoomDetailPage({ params }: PageProps) {
   }
 
   if (!listing) {
+    const notFound = Number.isNaN(listingId) || loadError?.status === 404;
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-white p-4">
-        <h2 className="text-2xl font-bold text-gray-900 mb-2">Listing not found</h2>
-        <p className="text-sm text-gray-500 mb-6">The stay you are looking for does not exist or has been removed.</p>
-        <Link
-          href="/"
-          className="rounded-full bg-black text-white px-6 py-2.5 text-xs font-bold hover:bg-gray-800 transition"
-        >
-          Return to Explore
-        </Link>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-white p-4 text-center" role="alert">
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">
+          {notFound ? "Listing not found" : "We couldn't load this stay"}
+        </h2>
+        <p className="text-sm text-gray-500 mb-6">
+          {notFound ? "The stay you are looking for does not exist or has been removed." : loadError?.message}
+        </p>
+        <div className="flex gap-3">
+          {!notFound && (
+            <button
+              onClick={() => { setLoading(true); loadData(); }}
+              className="rounded-full border border-black px-6 py-2.5 text-xs font-bold hover:bg-gray-50 transition cursor-pointer"
+            >
+              Try again
+            </button>
+          )}
+          <Link href="/" className="rounded-full bg-black text-white px-6 py-2.5 text-xs font-bold hover:bg-gray-800 transition">
+            Return to Explore
+          </Link>
+        </div>
       </div>
     );
   }
@@ -189,72 +192,22 @@ export default function RoomDetailPage({ params }: PageProps) {
             <div className="flex items-start justify-between pb-6">
               <div>
                 <h2 className="text-xl font-black text-gray-900">
-                  {listing.property_type} hosted by {listing.host?.name || "Elena"}
+                  {listing.property_type} hosted by {listing.host?.name ?? "the host"}
                 </h2>
-                <div className="mt-1 flex items-center gap-2 text-xs text-emerald-700 font-semibold">
-                  <span className="flex items-center gap-1">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Identity verified
-                  </span>
-                  <span className="text-gray-300">·</span>
-                  <span className="text-gray-500 font-normal">
-                    {listing.max_guests} guests · {listing.bedrooms} bedrooms · {listing.beds} beds · {listing.baths} baths
-                  </span>
-                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  {listing.max_guests} guests · {listing.bedrooms} bedrooms · {listing.beds} beds · {listing.baths} baths
+                </p>
 
-                {/* Host Response Time Badge */}
-                <div className="mt-2 flex items-center gap-2 text-xs text-gray-500">
-                  <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5 text-emerald-600" /> Generally replies in an hour
-                  </span>
-                  <span>·</span>
-                  <span>Response rate: 100%</span>
-                </div>
-
-                {/* Contact Host Button */}
-                <button
-                  onClick={() => setIsMessageHostOpen(true)}
-                  className="mt-3.5 inline-flex items-center gap-2 rounded-xl border border-gray-300 px-4 py-2 text-xs font-bold text-gray-800 hover:border-black hover:bg-gray-50 transition cursor-pointer"
-                >
-                  <MessageSquare className="w-4 h-4 text-[#FF385C]" />
-                  Contact Host
-                  <span className="text-[10px] bg-pink-50 text-[#FF385C] px-1.5 py-0.2 rounded-md ml-1">
-                    Direct Message
-                  </span>
-                </button>
               </div>
 
-              <img
-                src={listing.host?.avatar_url || "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=200&q=80"}
-                alt={listing.host?.name || "Host"}
-                className="h-14 w-14 rounded-full object-cover ring-2 ring-gray-100 shrink-0"
-              />
-            </div>
-
-            {/* Standout highlights */}
-            <div className="pt-6 space-y-5">
-              <div className="flex items-start gap-4">
-                <Laptop className="h-6 w-6 text-gray-800 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-sm font-bold text-gray-900">Dedicated workspace</h4>
-                  <p className="text-xs text-gray-500">A high-speed wifi workspace suitable for remote work.</p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-4">
-                <Key className="h-6 w-6 text-gray-800 shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-sm font-bold text-gray-900">Self check-in</h4>
-                  <p className="text-xs text-gray-500">Easily check yourself in with the smart lock or lockbox.</p>
-                </div>
-              </div>
-
-              <div className="flex items-start gap-4">
-                <ShieldCheck className="h-6 w-6 text-[#FF385C] shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="text-sm font-bold text-gray-900">AirCover Protection</h4>
-                  <p className="text-xs text-gray-500">Every booking includes free protection from Host cancellations.</p>
-                </div>
-              </div>
+              {listing.host?.avatar_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={listing.host.avatar_url}
+                  alt={listing.host.name}
+                  className="h-14 w-14 rounded-full object-cover ring-2 ring-gray-100 shrink-0"
+                />
+              )}
             </div>
 
             {/* Description */}
@@ -305,14 +258,23 @@ export default function RoomDetailPage({ params }: PageProps) {
           <div className="flex items-center justify-between mb-6">
             <h3 className="text-xl font-black text-gray-900">Guest reviews</h3>
             <button
-              onClick={() => setIsAddReviewOpen(true)}
+              onClick={() => (user ? setIsAddReviewOpen(true) : toast("Log in to write a review"))}
               className="rounded-xl border border-black px-4 py-2 text-xs font-bold text-black hover:bg-black hover:text-white transition cursor-pointer"
             >
               Write a Review
             </button>
           </div>
 
-          {reviewsSummary && (
+          {reviewsError && (
+            <p className="text-sm text-gray-500" role="alert">
+              Reviews could not be loaded.{" "}
+              <button onClick={loadData} className="font-bold underline cursor-pointer">Retry</button>
+            </p>
+          )}
+          {reviewsSummary && reviewsSummary.total_reviews === 0 && (
+            <p className="text-sm text-gray-500">No reviews yet. Guests can review after they have stayed.</p>
+          )}
+          {reviewsSummary && reviewsSummary.total_reviews > 0 && (
             <>
               <ReviewsSummary summary={reviewsSummary} />
               <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -328,9 +290,6 @@ export default function RoomDetailPage({ params }: PageProps) {
         <div className="mt-16 border-t border-gray-200 pt-10">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xl font-black text-gray-900">Where you&apos;ll be</h3>
-            <span className="text-xs text-gray-500 bg-gray-100 px-2.5 py-1 rounded-full font-semibold">
-              Interactive Leaflet Map
-            </span>
           </div>
           <p className="text-sm text-gray-600 mb-6 flex items-center gap-1.5">
             <MapPin className="h-4 w-4 text-[#FF385C]" /> {listing.location}
@@ -351,8 +310,9 @@ export default function RoomDetailPage({ params }: PageProps) {
                 max_guests: listing.max_guests,
                 rating: listing.rating,
                 reviews_count: listing.reviews_count,
-                cover_image: listing.images[0]?.url || "",
+                cover_image: listing.images.find((i) => i.is_cover)?.url ?? listing.images[0]?.url ?? "",
                 images: listing.images.map((i) => i.url),
+                is_wishlisted: wishlisted,
               },
             ]}
             height="400px"
@@ -369,13 +329,6 @@ export default function RoomDetailPage({ params }: PageProps) {
         onReviewAdded={loadData}
       />
 
-      {/* Message host modal */}
-      <MessageHostModal
-        isOpen={isMessageHostOpen}
-        onClose={() => setIsMessageHostOpen(false)}
-        host={listing.host}
-        listingTitle={listing.title}
-      />
     </div>
   );
 }

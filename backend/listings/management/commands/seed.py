@@ -1,132 +1,149 @@
-from django.core.management.base import BaseCommand
-from django.contrib.auth import get_user_model
-from listings.models import Listing, ListingImage, Review, Wishlist
-from bookings.models import Booking
-from datetime import date, timedelta
+"""Seed the database with a realistic, deterministic demo dataset.
+
+    python manage.py seed            # add data if the database is empty
+    python manage.py seed --reset    # wipe app data first, then seed
+
+Creates: 5 hosts, 7 guests, 16 curated listings with 5 photos each, past
+completed stays with reviews, and upcoming bookings that block dates.
+Every demo account uses the password `demo1234`.
+"""
+import json
 import random
+from datetime import date, timedelta
+from pathlib import Path
+
+from django.contrib.auth import get_user_model
+from django.core.management.base import BaseCommand
+from django.db import transaction
+
+from bookings.models import Booking
+from bookings.services import quote
+from listings.models import Listing, ListingImage, Review, Wishlist
 
 User = get_user_model()
+SEED_DIR = Path(__file__).resolve().parents[3] / "seed_data"
+PASSWORD = "demo1234"
+
+HOSTS = [
+    ("elena", "Elena", "Rostova", "elena.rostova@example.com"),
+    ("liam", "Liam", "Vance", "liam.vance@example.com"),
+    ("sofia", "Sofia", "Rossi", "sofia.rossi@example.com"),
+    ("kenji", "Kenji", "Sato", "kenji.sato@example.com"),
+    ("amara", "Amara", "Okafor", "amara.okafor@example.com"),
+]
+GUESTS = [
+    ("alex", "Alex", "Rivera", "alex.rivera@example.com"),
+    ("priya", "Priya", "Nair", "priya.nair@example.com"),
+    ("marcus", "Marcus", "Lee", "marcus.lee@example.com"),
+    ("aisha", "Aisha", "Khan", "aisha.khan@example.com"),
+    ("noah", "Noah", "Bennett", "noah.bennett@example.com"),
+    ("mei", "Mei", "Tanaka", "mei.tanaka@example.com"),
+    ("diego", "Diego", "Alvarez", "diego.alvarez@example.com"),
+]
+
+COMMENTS = [
+    "Exactly as pictured and even better in person. The host thought of everything.",
+    "Spotless, quiet and the view is unreal. We did not want to leave.",
+    "Great location, easy check-in and a very comfortable bed. Would stay again.",
+    "Lovely space with thoughtful touches. The kitchen had everything we needed.",
+    "Fantastic stay. Responsive host and a beautiful neighbourhood to explore.",
+    "Perfect for our family trip. Plenty of room and a lovely terrace in the evenings.",
+    "Beautifully designed and very clean. Sleeping here was a treat.",
+    "A little pricey but worth it for the setting. Everything worked perfectly.",
+]
+
 
 class Command(BaseCommand):
-    help = 'Seeds the database with sample data'
+    help = "Seed demo users, listings, bookings and reviews."
 
-    def handle(self, *args, **kwargs):
-        self.stdout.write('Seeding database...')
+    def add_arguments(self, parser):
+        parser.add_argument("--reset", action="store_true", help="delete existing app data first")
 
-        # 1. Create users
-        users_data = [
-            {'username': 'host1', 'email': 'host1@example.com', 'is_host': True},
-            {'username': 'host2', 'email': 'host2@example.com', 'is_host': True},
-            {'username': 'host3', 'email': 'host3@example.com', 'is_host': True},
-            {'username': 'host4', 'email': 'host4@example.com', 'is_host': True},
-            {'username': 'guest1', 'email': 'guest1@example.com', 'is_host': False},
-        ]
+    @transaction.atomic
+    def handle(self, *args, **opts):
+        if opts["reset"]:
+            for model in (Review, Wishlist, Booking, ListingImage, Listing):
+                model.objects.all().delete()
+            User.objects.filter(is_superuser=False).delete()
+        elif Listing.objects.exists():
+            self.stdout.write("Database already has listings; use --reset to reseed.")
+            return
 
-        users = []
-        for u_data in users_data:
-            user, created = User.objects.get_or_create(username=u_data['username'], defaults={'email': u_data['email'], 'is_host': u_data['is_host']})
-            if created:
-                user.set_password('password123')
-                user.save()
-            users.append(user)
-        
-        hosts = [u for u in users if u.is_host]
-        guest = users[-1]
+        rng = random.Random(2026)  # deterministic: same data on every machine
+        today = date.today()
 
-        # 2. Create listings
-        locations = ['Goa', 'Manali', 'Jaipur', 'Rishikesh', 'Udaipur', 'Bali', 'Santorini', 'Barcelona', 'Kyoto', 'Maldives', 'Tuscany', 'Cape Town', 'New York', 'Paris', 'Dubai']
-        categories = ['Beachfront', 'Cabins', 'Trending', 'Amazing views', 'Iconic cities', 'Countryside', 'Tiny homes', 'Camping', 'Mansions', 'Boats']
-        property_types = ['Villa', 'Cottage', 'Apartment', 'Bungalow', 'Cabin', 'Studio', 'Penthouse', 'Treehouse', 'Houseboat', 'Farmhouse']
-        amenities = ['Wifi', 'Pool', 'Kitchen', 'Air conditioning', 'Washer', 'Dryer', 'Free parking', 'Hot tub', 'Gym', 'BBQ grill', 'Beach access', 'Mountain views', 'Dedicated workspace', 'EV charger', 'Breakfast included']
+        hosts = [self._user(u, is_host=True) for u in HOSTS]
+        guests = [self._user(u, is_host=False) for u in GUESTS]
 
-        image_sets = {
-            'Beachfront': ['https://images.unsplash.com/photo-1499793983690-e29da59ef1c2?w=800', 'https://images.unsplash.com/photo-1520250497591-112f2f40a3f4?w=800', 'https://images.unsplash.com/photo-1571003123894-1f0594d2b5d9?w=800'],
-            'Cabins': ['https://images.unsplash.com/photo-1449824913935-59a10b8d2000?w=800', 'https://images.unsplash.com/photo-1518780664697-55e3ad937233?w=800', 'https://images.unsplash.com/photo-1542718610-a1d656d1884c?w=800'],
-            'Amazing views': ['https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800', 'https://images.unsplash.com/photo-1613490493576-7fde63acd811?w=800', 'https://images.unsplash.com/photo-1582268611958-ebfd161ef9cf?w=800'],
-            'Iconic cities': ['https://images.unsplash.com/photo-1502672260266-1c1ef2d93688?w=800', 'https://images.unsplash.com/photo-1522708323590-d24dbb6b0267?w=800', 'https://images.unsplash.com/photo-1493809842364-78817add7ffb?w=800'],
-            'Countryside': ['https://images.unsplash.com/photo-1510798831971-661eb04b3739?w=800', 'https://images.unsplash.com/photo-1568605114967-8130f3a36994?w=800', 'https://images.unsplash.com/photo-1600047509807-ba8f99d2cdde?w=800'],
-        }
-
-        default_images = ['https://images.unsplash.com/photo-1512917774080-9991f1c4c750?w=800', 'https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?w=800']
-
-        created_listings = []
-        for i in range(40):
-            cat = random.choice(categories)
-            prop = random.choice(property_types)
-            loc = random.choice(locations)
-            host = random.choice(hosts)
-            
-            listing, created = Listing.objects.get_or_create(
-                title=f"{prop} in {loc} ({i})",
-                defaults={
-                    'host': host,
-                    'description': f"Beautiful {prop} located in {loc}. Enjoy your stay!",
-                    'category': cat,
-                    'property_type': prop,
-                    'price_per_night': random.randint(50, 500),
-                    'cleaning_fee': random.randint(10, 50),
-                    'service_fee': random.randint(5, 30),
-                    'city': loc,
-                    'country': 'World',
-                    'location': f"{loc}, World",
-                    'latitude': random.uniform(-90, 90),
-                    'longitude': random.uniform(-180, 180),
-                    'max_guests': random.randint(1, 10),
-                    'bedrooms': random.randint(1, 5),
-                    'beds': random.randint(1, 5),
-                    'baths': random.uniform(1.0, 3.0),
-                    'amenities': random.sample(amenities, k=random.randint(3, 8))
-                }
+        raw = json.loads((SEED_DIR / "listings_1.json").read_text()) + json.loads(
+            (SEED_DIR / "listings_2.json").read_text()
+        )
+        listings = []
+        for item in raw:
+            host = hosts[(item["host_idx"] - 1) % len(hosts)]
+            listing = Listing.objects.create(
+                host=host,
+                title=item["title"], description=item["description"],
+                category=item["category"], property_type=item["property_type"],
+                price_per_night=item["price_per_night"],
+                cleaning_fee=item["cleaning_fee"], service_fee=item["service_fee"],
+                city=item["city"], country=item["country"], location=item["location"],
+                latitude=item["latitude"], longitude=item["longitude"],
+                max_guests=item["max_guests"], bedrooms=item["bedrooms"],
+                beds=item["beds"], baths=item["baths"], amenities=item["amenities"],
             )
-            created_listings.append(listing)
-
-            if created:
-                imgs = image_sets.get(cat, default_images)
-                for j, img_url in enumerate(imgs):
-                    ListingImage.objects.create(listing=listing, image_url=img_url, is_primary=(j==0), display_order=j)
-
-        # 3. Create bookings
-        for i in range(20):
-            listing = random.choice(created_listings)
-            start = date.today() + timedelta(days=random.randint(1, 30))
-            end = start + timedelta(days=random.randint(1, 7))
-            Booking.objects.get_or_create(
-                listing=listing,
-                guest=guest,
-                check_in_date=start,
-                defaults={
-                    'check_out_date': end,
-                    'guest_count': random.randint(1, listing.max_guests),
-                    'total_price': float(listing.price_per_night) * (end - start).days + float(listing.cleaning_fee) + float(listing.service_fee),
-                    'status': 'CONFIRMED'
-                }
+            ListingImage.objects.bulk_create(
+                ListingImage(listing=listing, url=url, is_cover=(i == 0), display_order=i)
+                for i, url in enumerate(item["images"])
             )
+            listings.append(listing)
 
-        # 4. Create reviews
-        for i in range(30):
-            listing = random.choice(created_listings)
-            Review.objects.get_or_create(
-                listing=listing,
-                guest=guest,
-                defaults={
-                    'rating': random.randint(3, 5),
-                    'cleanliness': random.uniform(3.0, 5.0),
-                    'accuracy': random.uniform(3.0, 5.0),
-                    'communication': random.uniform(3.0, 5.0),
-                    'location_rating': random.uniform(3.0, 5.0),
-                    'value_rating': random.uniform(3.0, 5.0),
-                    'comment': "Great place, really enjoyed my stay here!"
-                }
-            )
-            # Update listing rating
-            reviews = Review.objects.filter(listing=listing)
-            listing.rating = sum(r.rating for r in reviews) / len(reviews)
-            listing.reviews_count = len(reviews)
-            listing.save()
+        # Past, completed stays (each one earns a review) ...
+        for listing in listings:
+            reviewers = rng.sample(guests, k=rng.randint(4, 6))
+            for n, guest in enumerate(reviewers):
+                end = today - timedelta(days=rng.randint(7, 200) + n * 9)
+                start = end - timedelta(days=rng.randint(2, 6))
+                self._booking(listing, guest, start, end, rng)
+                rating = rng.choices([5, 4], weights=[7, 3])[0]
+                Review.objects.create(
+                    listing=listing, guest=guest, rating=rating,
+                    cleanliness=rng.choice([4, 5, 5]), accuracy=rng.choice([4, 5, 5]),
+                    communication=rng.choice([4, 5, 5]), location_rating=rng.choice([4, 5, 5]),
+                    value_rating=rng.choice([4, 4, 5]), comment=rng.choice(COMMENTS),
+                )
+            listing.refresh_rating()
 
-        # 5. Create wishlists
-        for i in range(10):
-            listing = random.choice(created_listings)
-            Wishlist.objects.get_or_create(user=guest, listing=listing)
+        # ... and upcoming stays that block dates on the calendar.
+        for listing in listings:
+            cursor = today + timedelta(days=rng.randint(2, 10))
+            for _ in range(rng.randint(1, 2)):
+                start = cursor
+                end = start + timedelta(days=rng.randint(2, 6))
+                self._booking(listing, rng.choice(guests), start, end, rng)
+                cursor = end + timedelta(days=rng.randint(3, 15))
 
-        self.stdout.write(self.style.SUCCESS('Successfully seeded the database.'))
+        # A few wishlist hearts for the demo guest.
+        for listing in rng.sample(listings, 4):
+            Wishlist.objects.create(user=guests[0], listing=listing)
+
+        self.stdout.write(self.style.SUCCESS(
+            f"Seeded {len(hosts)} hosts, {len(guests)} guests, {len(listings)} listings, "
+            f"{Booking.objects.count()} bookings, {Review.objects.count()} reviews."
+        ))
+        self.stdout.write(f"Demo logins (password '{PASSWORD}'): guest 'alex', host 'elena'.")
+
+    def _user(self, data, is_host):
+        username, first, last, email = data
+        user = User(username=username, first_name=first, last_name=last, email=email, is_host=is_host)
+        user.set_password(PASSWORD)
+        user.save()
+        return user
+
+    def _booking(self, listing, guest, start, end, rng):
+        guests = rng.randint(1, listing.max_guests)
+        _, total = quote(listing, start, end)
+        return Booking.objects.create(
+            listing=listing, guest=guest, check_in_date=start, check_out_date=end,
+            guest_count=guests, total_price=total,
+        )

@@ -1,218 +1,294 @@
-from rest_framework import viewsets, permissions, filters, status
+import uuid
+from datetime import date
+from decimal import Decimal, InvalidOperation
+
+from django.conf import settings
+from django.core.files.storage import default_storage
+from django.db.models import Avg, Count, Sum
+from rest_framework import filters, permissions, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.exceptions import PermissionDenied
-from django.db.models import Q, Avg
-from django_filters.rest_framework import DjangoFilterBackend
-from datetime import datetime
-from .models import Listing, ListingImage, Review, Wishlist
+
+from bookings.availability import overlapping
+from bookings.models import Booking
+from bookings.serializers import BookingSerializer
+from users.views import superhost_ids
+
+from .models import Listing, Review, Wishlist
+from .permissions import IsHostOrReadOnly
 from .serializers import (
-    ListingSerializer, ListingCreateSerializer,
-    ReviewSerializer, WishlistSerializer
+    ListingCardSerializer,
+    ListingDetailSerializer,
+    ListingWriteSerializer,
+    ReviewSerializer,
 )
+from django_filters.rest_framework import DjangoFilterBackend
 
-class IsHostOrReadOnly(permissions.BasePermission):
-    def has_permission(self, request, view):
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        return request.user and request.user.is_authenticated
 
-    def has_object_permission(self, request, view, obj):
-        if request.method in permissions.SAFE_METHODS:
-            return True
-        if hasattr(obj, 'host'):
-            return obj.host == request.user
-        return False
+def parse_decimal(params, key):
+    raw = params.get(key)
+    if raw in (None, ""):
+        return None
+    try:
+        return Decimal(raw)
+    except InvalidOperation:
+        raise ValidationError({key: "Must be a number."})
+
+
+def parse_int(params, key):
+    raw = params.get(key)
+    if raw in (None, ""):
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValidationError({key: "Must be a whole number."})
+
+
+def parse_date(params, key):
+    raw = params.get(key)
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        raise ValidationError({key: "Use the format YYYY-MM-DD."})
+
+
+def card_context(request):
+    """Per-request lookups shared by every serialized listing (2 queries total)."""
+    wishlist_ids = set()
+    if request.user.is_authenticated:
+        wishlist_ids = set(
+            Wishlist.objects.filter(user=request.user).values_list("listing_id", flat=True)
+        )
+    return {"request": request, "superhost_ids": superhost_ids(), "wishlist_ids": wishlist_ids}
+
 
 class ListingViewSet(viewsets.ModelViewSet):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [IsHostOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['category', 'property_type', 'city', 'country']
-    search_fields = ['title', 'description', 'location', 'city', 'country']
-    ordering_fields = ['price_per_night', 'rating', 'created_at']
+    filterset_fields = ["category", "city", "country"]
+    search_fields = ["title", "description", "location", "city", "country"]
+    ordering_fields = ["price_per_night", "rating", "created_at"]
 
     def get_serializer_class(self):
-        if self.request.method in ['POST', 'PUT', 'PATCH']:
-            return ListingCreateSerializer
-        return ListingSerializer
-
-    def get_queryset(self):
-        qs = Listing.objects.all().prefetch_related('images', 'reviews').select_related('host').order_by('-created_at')
-        params = self.request.query_params
-
-        # Filters
-        min_price = params.get('min_price')
-        max_price = params.get('max_price')
-        guests = params.get('guests')
-        property_type = params.get('property_type')
-        start_date = params.get('start_date')
-        end_date = params.get('end_date')
-        amenities = params.get('amenities')
-
-        if min_price:
-            try:
-                qs = qs.filter(price_per_night__gte=float(min_price))
-            except ValueError:
-                pass
-        if max_price:
-            try:
-                qs = qs.filter(price_per_night__lte=float(max_price))
-            except ValueError:
-                pass
-        if guests:
-            try:
-                qs = qs.filter(max_guests__gte=int(guests))
-            except ValueError:
-                pass
-        if property_type and property_type != 'Any':
-            qs = qs.filter(property_type__iexact=property_type)
-        if amenities:
-            for amenity in amenities.split(','):
-                qs = qs.filter(amenities__icontains=amenity.strip())
-        if start_date and end_date:
-            # Exclude listings that have confirmed bookings overlapping with requested dates
-            from bookings.models import Booking
-            booked_listing_ids = Booking.objects.filter(
-                status='CONFIRMED',
-                check_in_date__lt=end_date,
-                check_out_date__gt=start_date
-            ).values_list('listing_id', flat=True)
-            qs = qs.exclude(id__in=booked_listing_ids)
-
-        return qs
+        if self.action in ("create", "update", "partial_update"):
+            return ListingWriteSerializer
+        if self.action == "retrieve":
+            return ListingDetailSerializer
+        return ListingCardSerializer
 
     def get_serializer_context(self):
-        return {'request': self.request}
-
-    def perform_create(self, serializer):
-        host_id = self.request.data.get('host_id')
-        if host_id:
-            from django.contrib.auth import get_user_model
-            User = get_user_model()
-            try:
-                host = User.objects.get(id=host_id)
-            except User.DoesNotExist:
-                host = None
-        else:
-            host = self.request.user if self.request.user.is_authenticated else None
-        serializer.save(host=host)
-
-    @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
-    def my_listings(self, request):
-        user_id = request.query_params.get('user_id')
-        if user_id:
-            qs = self.get_queryset().filter(host_id=user_id)
-        else:
-            qs = self.get_queryset().filter(host=request.user if request.user.is_authenticated else None)
-        serializer = ListingSerializer(qs, many=True, context={'request': request})
-        return Response(serializer.data)
-
-class ReviewViewSet(viewsets.ModelViewSet):
-    serializer_class = ReviewSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+        return card_context(self.request)
 
     def get_queryset(self):
-        listing_id = self.kwargs.get('listing_pk')
-        if listing_id:
-            return Review.objects.filter(listing_id=listing_id).select_related('guest').order_by('-created_at')
-        return Review.objects.none()
+        qs = Listing.objects.select_related("host").prefetch_related("images")
+        if self.action != "list":
+            return qs  # detail/edit/delete address one listing by id
 
-    def list(self, request, *args, **kwargs):
-        qs = self.get_queryset()
-        reviews = ReviewSerializer(qs, many=True).data
-        listing_id = self.kwargs.get('listing_pk')
-        try:
-            listing = Listing.objects.get(id=listing_id)
-            avg = listing.rating
-        except Listing.DoesNotExist:
-            avg = 0
+        p = self.request.query_params
+        min_price, max_price = parse_decimal(p, "min_price"), parse_decimal(p, "max_price")
+        guests = parse_int(p, "guests")
+        start, end = parse_date(p, "start_date"), parse_date(p, "end_date")
 
-        # Aggregate sub-ratings
-        agg = qs.aggregate(
-            avg_cleanliness=Avg('cleanliness'),
-            avg_accuracy=Avg('accuracy'),
-            avg_communication=Avg('communication'),
-            avg_location=Avg('location_rating'),
-            avg_value=Avg('value_rating')
-        )
-
-        return Response({
-            'avg_rating': avg,
-            'total_reviews': len(reviews),
-            'cleanliness': round(agg['avg_cleanliness'] or avg, 2),
-            'accuracy': round(agg['avg_accuracy'] or avg, 2),
-            'communication': round(agg['avg_communication'] or avg, 2),
-            'location_rating': round(agg['avg_location'] or avg, 2),
-            'value_rating': round(agg['avg_value'] or avg, 2),
-            'reviews': reviews,
-        })
+        if min_price is not None:
+            qs = qs.filter(price_per_night__gte=min_price)
+        if max_price is not None:
+            qs = qs.filter(price_per_night__lte=max_price)
+        if guests:
+            qs = qs.filter(max_guests__gte=guests)
+        property_type = p.get("property_type")
+        if property_type and property_type != "Any":
+            qs = qs.filter(property_type__iexact=property_type)
+        for amenity in filter(None, (a.strip() for a in p.get("amenities", "").split(","))):
+            # amenities is stored as a JSON list; match the quoted element so
+            # "Pool" does not also match "Pool table"
+            qs = qs.filter(amenities__icontains=f'"{amenity}"')
+        if start and end:
+            if end <= start:
+                raise ValidationError({"end_date": "Check-out must be after check-in."})
+            clashing = overlapping(start, end).values("listing_id")
+            qs = qs.exclude(id__in=clashing)
+        return qs
 
     def perform_create(self, serializer):
-        listing_id = self.kwargs.get('listing_pk')
-        user_id = self.request.data.get('user_id')
-        if user_id:
-            from users.models import User
-            guest = User.objects.get(id=user_id)
-        else:
-            guest = self.request.user
-        review = serializer.save(guest=guest, listing_id=listing_id)
-        # Update listing rating
-        listing = Listing.objects.get(id=listing_id)
-        reviews = Review.objects.filter(listing=listing)
-        if reviews.exists():
-            listing.rating = round(reviews.aggregate(Avg('rating'))['rating__avg'], 2)
-            listing.reviews_count = reviews.count()
-            listing.save()
+        serializer.save(host=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        listing = self.get_object()
+        upcoming = listing.bookings.filter(
+            status=Booking.Status.CONFIRMED, check_out_date__gte=date.today()
+        ).count()
+        if upcoming:
+            return Response(
+                {"detail": f"This listing has {upcoming} upcoming booking(s). Cancel them first."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        listing.delete()
+        return Response({"message": "Listing deleted", "id": kwargs.get("pk")})
+
+    @action(detail=False, methods=["get"], permission_classes=[permissions.IsAuthenticated])
+    def my_listings(self, request):
+        qs = self.get_queryset().filter(host=request.user)
+        return Response(ListingCardSerializer(qs, many=True, context=self.get_serializer_context()).data)
+
+
+class ReviewViewSet(viewsets.GenericViewSet):
+    """Nested under /listings/{listing_pk}/reviews/."""
+
+    serializer_class = ReviewSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    pagination_class = None
+    filter_backends = []
+
+    def get_queryset(self):
+        return Review.objects.filter(listing_id=self.kwargs["listing_pk"]).select_related("guest")
+
+    def list(self, request, listing_pk=None):
+        qs = self.get_queryset()
+        agg = qs.aggregate(
+            avg=Avg("rating"), n=Count("id"), clean=Avg("cleanliness"), acc=Avg("accuracy"),
+            comm=Avg("communication"), loc=Avg("location_rating"), val=Avg("value_rating"),
+        )
+        ctx = {"superhost_ids": superhost_ids()}
+        r = lambda v: round(v or 0.0, 2)  # noqa: E731
+        return Response(
+            {
+                "average_rating": r(agg["avg"]),
+                "total_reviews": agg["n"],
+                "cleanliness_avg": r(agg["clean"]),
+                "accuracy_avg": r(agg["acc"]),
+                "communication_avg": r(agg["comm"]),
+                "location_avg": r(agg["loc"]),
+                "value_avg": r(agg["val"]),
+                "reviews": ReviewSerializer(qs, many=True, context=ctx).data,
+            }
+        )
+
+    def create(self, request, listing_pk=None):
+        try:
+            listing = Listing.objects.get(pk=listing_pk)
+        except Listing.DoesNotExist:
+            return Response({"detail": "Listing not found."}, status=404)
+
+        stayed = Booking.objects.filter(
+            listing=listing, guest=request.user, status=Booking.Status.CONFIRMED,
+            check_out_date__lte=date.today(),
+        ).exists()
+        if not stayed:
+            raise ValidationError("You can review a place after you have stayed there.")
+        if Review.objects.filter(listing=listing, guest=request.user).exists():
+            raise ValidationError("You have already reviewed this place.")
+
+        serializer = ReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        review = serializer.save(guest=request.user, listing=listing)
+        listing.refresh_rating()
+        return Response(
+            ReviewSerializer(review, context={"superhost_ids": superhost_ids()}).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class WishlistView(APIView):
+    """GET: the signed-in user's saved listings."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        listings = (
+            Listing.objects.filter(wishlisted_by__user=request.user)
+            .select_related("host").prefetch_related("images")
+            .order_by("-wishlisted_by__created_at")
+        )
+        return Response(ListingCardSerializer(listings, many=True, context=card_context(request)).data)
+
 
 class WishlistToggleView(APIView):
-    permission_classes = [permissions.AllowAny]
+    """POST {listing_id}: save the listing if it is not saved, remove it if it is."""
 
-    def get(self, request):
-        user_id = request.query_params.get('user_id')
-        if not user_id:
-            return Response([])
-        wishlists = Wishlist.objects.filter(user_id=user_id).select_related('listing').prefetch_related('listing__images', 'listing__host')
-        listings = [w.listing for w in wishlists]
-        data = ListingSerializer(listings, many=True, context={'request': request}).data
-        return Response(data)
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        listing_id = request.data.get('listing_id')
-        user_id = request.data.get('user_id')
-        if not listing_id or not user_id:
-            return Response({'error': 'listing_id and user_id required'}, status=400)
+        listing_id = request.data.get("listing_id")
+        if not listing_id:
+            raise ValidationError({"listing_id": "This field is required."})
         try:
-            listing = Listing.objects.get(id=listing_id)
-        except Listing.DoesNotExist:
-            return Response({'error': 'Listing not found'}, status=404)
-        wishlist_item, created = Wishlist.objects.get_or_create(
-            user_id=user_id, listing=listing
-        )
+            listing = Listing.objects.get(pk=listing_id)
+        except (Listing.DoesNotExist, ValueError):
+            return Response({"detail": "Listing not found."}, status=404)
+        item, created = Wishlist.objects.get_or_create(user=request.user, listing=listing)
         if not created:
-            wishlist_item.delete()
-            return Response({'listing_id': listing_id, 'is_wishlisted': False, 'message': 'Removed from wishlist'})
-        return Response({'listing_id': listing_id, 'is_wishlisted': True, 'message': 'Added to wishlist'})
+            item.delete()
+        return Response(
+            {
+                "listing_id": listing.id,
+                "is_wishlisted": created,
+                "message": "Added to wishlist" if created else "Removed from wishlist",
+            }
+        )
+
 
 class HostDashboardView(APIView):
-    permission_classes = [permissions.AllowAny]
+    """The signed-in host's listings, bookings and headline numbers."""
+
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from bookings.models import Booking
-        from bookings.serializers import BookingSerializer
-        host_id = request.query_params.get('host_id')
-        if not host_id:
-            return Response({'error': 'host_id required'}, status=400)
-        listings = Listing.objects.filter(host_id=host_id).prefetch_related('images').select_related('host')
-        bookings = Booking.objects.filter(listing__host_id=host_id).select_related('listing', 'guest').order_by('-created_at')
-        
-        total_revenue = sum(float(b.total_price) for b in bookings if b.status == 'CONFIRMED')
-        avg_rating = sum(l.rating for l in listings) / len(listings) if listings else 0
+        if not request.user.is_host:
+            return Response({"detail": "Only hosts have a dashboard."}, status=403)
 
-        return Response({
-            'listings': ListingSerializer(listings, many=True, context={'request': request}).data,
-            'bookings': BookingSerializer(bookings, many=True).data,
-            'total_revenue': round(total_revenue, 2),
-            'total_listings': listings.count(),
-            'avg_rating': round(avg_rating, 2),
-        })
+        listings = (
+            Listing.objects.filter(host=request.user)
+            .select_related("host").prefetch_related("images")
+        )
+        bookings = Booking.objects.filter(listing__host=request.user)
+        confirmed = bookings.filter(status=Booking.Status.CONFIRMED)
+        rated = listings.filter(reviews_count__gt=0).aggregate(avg=Avg("rating"))["avg"]
+
+        recent = bookings.select_related("listing", "guest").prefetch_related("listing__images")[:20]
+        ctx = card_context(request)
+        return Response(
+            {
+                "stats": {
+                    "total_listings": listings.count(),
+                    "total_bookings": confirmed.count(),
+                    "total_revenue": float(confirmed.aggregate(s=Sum("total_price"))["s"] or 0),
+                    "average_rating": round(rated or 0.0, 2),
+                },
+                "listings": ListingCardSerializer(listings, many=True, context=ctx).data,
+                "recent_bookings": BookingSerializer(recent, many=True, context=ctx).data,
+            }
+        )
+
+
+ALLOWED_IMAGE_TYPES = {
+    "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif",
+}
+
+
+class UploadView(APIView):
+    """POST multipart `file`: store a photo and return its URL.
+
+    Demo storage on local disk. Production: S3/Cloudinary behind a CDN.
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        file = request.FILES.get("file")
+        if not file:
+            raise ValidationError({"file": "Choose an image to upload."})
+        ext = ALLOWED_IMAGE_TYPES.get(file.content_type)
+        if not ext:
+            raise ValidationError({"file": "Only JPEG, PNG, WebP or GIF images are allowed."})
+        if file.size > settings.MAX_UPLOAD_BYTES:
+            raise ValidationError({"file": "Images must be 5 MB or smaller."})
+        name = default_storage.save(f"uploads/{uuid.uuid4().hex}.{ext}", file)
+        url = request.build_absolute_uri(f"{settings.MEDIA_URL}{name}")
+        return Response({"url": url}, status=status.HTTP_201_CREATED)

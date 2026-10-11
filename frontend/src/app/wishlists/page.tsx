@@ -6,9 +6,18 @@ import { Heart } from "lucide-react";
 import { fetchWishlists } from "@/lib/api";
 import { ListingCard } from "@/types";
 import { useAuth } from "@/context/AuthContext";
+import RequireAuth from "@/components/auth/RequireAuth";
 import ListingGrid from "@/components/listings/ListingGrid";
 
 export default function WishlistsPage() {
+  return (
+    <RequireAuth what="your wishlists">
+      <Wishlists />
+    </RequireAuth>
+  );
+}
+
+function Wishlists() {
   const { user } = useAuth();
   const [wishlists, setWishlists] = useState<ListingCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -17,7 +26,7 @@ export default function WishlistsPage() {
     const loadWishlists = async () => {
       setLoading(true);
       try {
-        const data = await fetchWishlists(user.id);
+        const data = await fetchWishlists();
         setWishlists(data);
       } catch {
         setWishlists([]);
@@ -26,7 +35,7 @@ export default function WishlistsPage() {
       }
     };
     loadWishlists();
-  }, [user.id]);
+  }, [user?.id]);
 
   return (
     <div className="min-h-screen bg-white py-10">

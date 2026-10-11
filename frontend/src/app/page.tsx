@@ -1,89 +1,77 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import CategoriesBar from "@/components/layout/CategoriesBar";
 import ListingGrid from "@/components/listings/ListingGrid";
-import MapView from "@/components/map/MapView";
 import { fetchListings } from "@/lib/api";
 import { ListingCard, SearchFilterState } from "@/types";
 import { useAuth } from "@/context/AuthContext";
 import { useSearch } from "@/context/SearchContext";
-import { Map, List, ChevronLeft, ChevronRight, X, Search, RotateCcw } from "lucide-react";
-import { FALLBACK_LISTINGS } from "@/data/fallbackData";
+import { X, Search, RotateCcw } from "lucide-react";
 
 export default function HomePage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const { filters, updateFilter, clearFilters, openSearchModal } = useSearch();
 
-  const [listings, setListings] = useState<ListingCard[]>(FALLBACK_LISTINGS.slice(0, 8));
-  const [totalListings, setTotalListings] = useState(FALLBACK_LISTINGS.length);
-  const [loading, setLoading] = useState(false);
-  const [showMap, setShowMap] = useState(false);
-  const [page, setPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(Math.ceil(FALLBACK_LISTINGS.length / 8));
-  const limit = 8;
+  const [listings, setListings] = useState<ListingCard[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [totalPages, setTotalPages] = useState(1);
+  const limit = 14;
   const observerTarget = useRef<HTMLDivElement>(null);
 
+  // The page number belongs to one set of filters (and one user, because the
+  // hearts are per user). A new key means "start again from page 1".
+  const queryKey = `${user?.id ?? "anon"}|${JSON.stringify(filters)}`;
+  const [pageState, setPageState] = useState({ key: queryKey, n: 1 });
+  const page = pageState.key === queryKey ? pageState.n : 1;
+  const setPage = useCallback((n: number | ((p: number) => number)) => {
+    setPageState((prev) => {
+      const current = prev.key === queryKey ? prev.n : 1;
+      return { key: queryKey, n: typeof n === "function" ? n(current) : n };
+    });
+  }, [queryKey]);
+
   const loadListings = useCallback(
-    async (currentFilters: SearchFilterState, pageNum = 1) => {
+    async (currentFilters: SearchFilterState, pageNum: number) => {
       setLoading(true);
+      setError("");
       try {
-        const res = await fetchListings(currentFilters, user.id, pageNum, limit);
+        const res = await fetchListings(currentFilters, pageNum, limit);
         setListings((prev) => {
           if (pageNum === 1) return res.listings;
-          const existingIds = new Set(prev.map(l => l.id));
-          const newItems = res.listings.filter(l => !existingIds.has(l.id));
-          return [...prev, ...newItems];
+          const existingIds = new Set(prev.map((l) => l.id));
+          return [...prev, ...res.listings.filter((l) => !existingIds.has(l.id))];
         });
-        setTotalListings(res.total);
         setTotalPages(res.total_pages);
       } catch (err) {
-        console.warn("Could not sync with backend, retaining stays:", err);
+        setError(err instanceof Error ? err.message : "Could not load stays.");
       } finally {
         setLoading(false);
       }
     },
-    [user.id]
+    []
   );
 
-  // Fetch whenever filters or page changes
   useEffect(() => {
+    if (authLoading) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     loadListings(filters, page);
-  }, [filters, page, loadListings]);
+  }, [filters, page, authLoading, loadListings, user?.id]);
 
   // Infinite Scroll Observer
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && !loading && page < totalPages) {
+        if (entries[0].isIntersecting && !loading && !error && page < totalPages) {
           setPage((prev) => prev + 1);
         }
       },
       { threshold: 0.1 }
     );
-
     const currentTarget = observerTarget.current;
-    if (currentTarget) {
-      observer.observe(currentTarget);
-    }
-
-    return () => {
-      if (currentTarget) {
-        observer.unobserve(currentTarget);
-      }
-    };
-  }, [loading, page, totalPages]);
-
-  // Reset to page 1 whenever search criteria change
-  const handleCategorySelect = (category: string) => {
-    setPage(1);
-    updateFilter({ category: category === "All" ? undefined : category });
-  };
-
-  const handleApplyFilters = (newFilters: Partial<SearchFilterState>) => {
-    setPage(1);
-    updateFilter(newFilters);
-  };
+    if (currentTarget) observer.observe(currentTarget);
+    return () => observer.disconnect();
+  }, [loading, error, page, totalPages, setPage]);
 
   const handleRemoveFilter = (key: keyof SearchFilterState) => {
     setPage(1);
@@ -107,16 +95,8 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-white pb-24">
-      {/* Categories Bar */}
-      <CategoriesBar
-        activeCategory={filters.category || "All"}
-        onSelectCategory={handleCategorySelect}
-        onApplyFilters={handleApplyFilters}
-        currentFilters={filters}
-      />
-
       {/* Main Content Area */}
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1760px] px-4 sm:px-6 lg:px-10">
         {/* Active Filter Tags */}
         {hasActiveFilters && (
           <div className="pt-4 pb-2 flex flex-wrap items-center gap-2">
@@ -197,21 +177,17 @@ export default function HomePage() {
           </div>
         )}
 
-        {/* Results summary bar */}
-        <div className="pt-4 pb-2 flex items-center justify-between text-xs text-gray-500 font-semibold border-b border-gray-100">
-          <span>
-            {totalListings} {totalListings === 1 ? "stay" : "stays"} available{" "}
-            {filters.category && filters.category !== "All"
-              ? `in ${filters.category}`
-              : "worldwide"}
-            {filters.guests ? ` · fitting ${filters.guests}+ guests` : ""}
-          </span>
-        </div>
-
         {/* Listings or Map View */}
-        {showMap ? (
-          <div className="py-6">
-            <MapView listings={listings} height="75vh" zoom={3} />
+        {error && listings.length === 0 ? (
+          <div className="py-20 text-center max-w-md mx-auto" role="alert">
+            <h3 className="text-xl font-bold text-gray-900 mb-2">We couldn&apos;t load stays</h3>
+            <p className="text-sm text-gray-500 mb-6">{error}</p>
+            <button
+              onClick={() => loadListings(filters, 1)}
+              className="px-6 py-2.5 rounded-full bg-black text-white text-xs font-bold hover:bg-gray-800 transition cursor-pointer"
+            >
+              Try again
+            </button>
           </div>
         ) : listings.length === 0 && !loading ? (
           /* Empty Search Results State */
@@ -257,6 +233,15 @@ export default function HomePage() {
               <div ref={observerTarget} className="h-10 w-full mt-8" />
             )}
             
+            {error && listings.length > 0 && (
+              <div className="py-6 text-center text-sm text-gray-600" role="alert">
+                {error}{" "}
+                <button onClick={() => loadListings(filters, page)} className="font-bold underline cursor-pointer">
+                  Retry
+                </button>
+              </div>
+            )}
+
             {/* Loading State for Infinite Scroll */}
             {loading && page > 1 && (
               <div className="flex justify-center items-center py-8">
@@ -267,25 +252,6 @@ export default function HomePage() {
         )}
       </div>
 
-      {/* Floating View Toggle Button (Map / List) */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-30">
-        <button
-          onClick={() => setShowMap(!showMap)}
-          className="flex items-center gap-2 rounded-full bg-gray-900 px-5 py-3 text-xs font-bold text-white shadow-xl hover:scale-105 hover:bg-black transition cursor-pointer"
-        >
-          {showMap ? (
-            <>
-              <List className="h-4 w-4" />
-              <span>Show list</span>
-            </>
-          ) : (
-            <>
-              <Map className="h-4 w-4" />
-              <span>Show map</span>
-            </>
-          )}
-        </button>
-      </div>
     </div>
   );
 }
