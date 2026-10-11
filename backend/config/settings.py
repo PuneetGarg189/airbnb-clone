@@ -122,3 +122,13 @@ SIMPLE_JWT = {
 
 # Photo uploads (demo storage on local disk; production would use S3/Cloudinary)
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+# Print errors (with tracebacks) to stdout so they show up in Render's logs.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}
